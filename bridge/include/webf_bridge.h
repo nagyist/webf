@@ -7,6 +7,7 @@
 #define WEBF_BRIDGE_EXPORT_H
 
 #include <include/dart_api_dl.h>
+#include <functional>
 #include <thread>
 
 #if defined(_WIN32)
@@ -17,12 +18,10 @@
 #define WEBF_EXPORT __attribute__((__visibility__("default")))
 #endif
 
-typedef struct SharedNativeString SharedNativeString;
-typedef struct NativeValue NativeValue;
-typedef struct NativeScreen NativeScreen;
-typedef struct NativeByteCode NativeByteCode;
-
-struct WebFInfo;
+class SharedNativeString;
+class NativeValue;
+class NativeScreen;
+class NativeByteCode;
 
 struct WebFInfo {
   const char* app_name{nullptr};
@@ -32,39 +31,113 @@ struct WebFInfo {
 };
 
 typedef void (*Task)(void*);
-WEBF_EXPORT_C
-void* initDartIsolateContext(uint64_t* dart_methods, int32_t dart_methods_len);
-WEBF_EXPORT_C
-void* allocateNewPage(void* dart_isolate_context, int32_t targetContextId);
+typedef std::function<void(bool)> DartWork;
+typedef void (*AllocateNewPageCallback)(Dart_Handle dart_handle, void*);
+typedef void (*DisposePageCallback)(Dart_Handle dart_handle);
+typedef void (*InvokeModuleEventCallback)(Dart_Handle dart_handle, void*);
+typedef void (*EvaluateQuickjsByteCodeCallback)(Dart_Handle dart_handle, int8_t);
+typedef void (*DumpQuickjsByteCodeCallback)(Dart_Handle);
+typedef void (*ParseHTMLCallback)(Dart_Handle);
+typedef void (*EvaluateScriptsCallback)(Dart_Handle dart_handle, int8_t);
 
 WEBF_EXPORT_C
-int64_t newPageId();
+void* initDartIsolateContextSync(int64_t dart_port,
+                                 uint64_t* dart_methods,
+                                 int32_t dart_methods_len,
+                                 int8_t enable_profile);
 
 WEBF_EXPORT_C
-void disposePage(void* dart_isolate_context, void* page);
+void allocateNewPage(double thread_identity,
+                     int32_t sync_buffer_size,
+                     void* dart_isolate_context,
+                     Dart_Handle dart_handle,
+                     AllocateNewPageCallback result_callback);
+
 WEBF_EXPORT_C
-int8_t evaluateScripts(void* page,
-                       SharedNativeString* code,
-                       uint8_t** parsed_bytecodes,
-                       uint64_t* bytecode_len,
-                       const char* bundleFilename,
-                       int32_t startLine);
+void* allocateNewPageSync(double thread_identity, void* dart_isolate_context);
+
 WEBF_EXPORT_C
-int8_t evaluateQuickjsByteCode(void* page, uint8_t* bytes, int32_t byteLen);
+int64_t newPageIdSync();
+
 WEBF_EXPORT_C
-void parseHTML(void* page, const char* code, int32_t length);
+void disposePage(double dedicated_thread,
+                 void* dart_isolate_context,
+                 void* page,
+                 Dart_Handle dart_handle,
+                 DisposePageCallback result_callback);
+
 WEBF_EXPORT_C
-NativeValue* invokeModuleEvent(void* page,
-                               SharedNativeString* module,
-                               const char* eventType,
-                               void* event,
-                               NativeValue* extra);
+void disposePageSync(double dedicated_thread, void* dart_isolate_context, void* page);
+
+WEBF_EXPORT_C
+void evaluateScripts(void* page,
+                     const char* code,
+                     uint64_t code_len,
+                     uint8_t** parsed_bytecodes,
+                     uint64_t* bytecode_len,
+                     const char* bundleFilename,
+                     int32_t start_line,
+                     int64_t profile_id,
+                     Dart_Handle dart_handle,
+                     EvaluateQuickjsByteCodeCallback result_callback);
+WEBF_EXPORT_C
+void evaluateQuickjsByteCode(void* page,
+                             uint8_t* bytes,
+                             int32_t byteLen,
+                             int64_t profile_id,
+                             Dart_Handle dart_handle,
+                             EvaluateQuickjsByteCodeCallback result_callback);
+
+WEBF_EXPORT_C
+void dumpQuickjsByteCode(void* page,
+                         int64_t profile_id,
+                         const char* code,
+                         int32_t code_len,
+                         uint8_t** parsed_bytecodes,
+                         uint64_t* bytecode_len,
+                         const char* url,
+                         Dart_Handle dart_handle,
+                         DumpQuickjsByteCodeCallback result_callback);
+
+WEBF_EXPORT_C
+void parseHTML(void* page,
+               char* code,
+               int32_t length,
+               int64_t profile_id,
+               Dart_Handle dart_handle,
+               ParseHTMLCallback result_callback);
+WEBF_EXPORT_C
+void* parseSVGResult(const char* code, int32_t length);
+WEBF_EXPORT_C
+void freeSVGResult(void* svgTree);
+WEBF_EXPORT_C
+void invokeModuleEvent(void* page,
+                       SharedNativeString* module,
+                       const char* eventType,
+                       void* event,
+                       NativeValue* extra,
+                       Dart_Handle dart_handle,
+                       InvokeModuleEventCallback result_callback);
+WEBF_EXPORT_C
+void collectNativeProfileData(void* ptr, const char** data, uint32_t* len);
+WEBF_EXPORT_C
+void clearNativeProfileData(void* ptr);
+
+WEBF_EXPORT_C
+void* allocateNativeBindingObject();
+
+WEBF_EXPORT_C
+bool isNativeBindingObjectDisposed(void* native_binding_object);
+
 WEBF_EXPORT_C
 WebFInfo* getWebFInfo();
 WEBF_EXPORT_C
 void dispatchUITask(void* page, void* context, void* callback);
 WEBF_EXPORT_C
 void* getUICommandItems(void* page);
+WEBF_EXPORT_C
+uint32_t getUICommandKindFlag(void* page);
+
 WEBF_EXPORT_C
 int64_t getUICommandItemSize(void* page);
 WEBF_EXPORT_C
@@ -73,12 +146,13 @@ WEBF_EXPORT_C
 void registerPluginByteCode(uint8_t* bytes, int32_t length, const char* pluginName);
 WEBF_EXPORT_C
 void registerPluginCode(const char* code, int32_t length, const char* pluginName);
-WEBF_EXPORT_C
-int32_t profileModeEnabled();
 
+WEBF_EXPORT_C int8_t isJSThreadBlocked(void* dart_isolate_context, double context_id);
+
+WEBF_EXPORT_C void executeNativeCallback(DartWork* work_ptr);
 WEBF_EXPORT_C
 void init_dart_dynamic_linking(void* data);
 WEBF_EXPORT_C
-void register_dart_context_finalizer(Dart_Handle dart_handle, void* dart_isolate_context);
+void on_dart_context_finalized(void* dart_isolate_context);
 
 #endif  // WEBF_BRIDGE_EXPORT_H

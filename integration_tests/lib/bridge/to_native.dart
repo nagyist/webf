@@ -6,6 +6,7 @@ import 'dart:async';
 import 'dart:ffi';
 
 import 'package:ffi/ffi.dart';
+import 'package:webf/foundation.dart';
 import 'package:webf/bridge.dart';
 
 // Steps for using dart:ffi to call a C function from Dart:
@@ -23,41 +24,59 @@ typedef DartInitTestFramework = Pointer<Void> Function(Pointer<Void> page);
 final DartInitTestFramework _initTestFramework =
     WebFDynamicLibrary.testRef.lookup<NativeFunction<NativeInitTestFramework>>('initTestFramework').asFunction();
 
-Pointer<Void> initTestFramework(int contextId) {
+Pointer<Void> initTestFramework(double contextId) {
   return _initTestFramework(getAllocatedPage(contextId)!);
 }
 
 // Register evaluteTestScripts
-typedef NativeEvaluateTestScripts = Int8 Function(Pointer<Void> testContext, Pointer<NativeString>, Pointer<Utf8>, Int32);
+typedef NativeEvaluateTestScripts = Int8 Function(
+    Pointer<Void> testContext, Pointer<NativeString>, Pointer<Utf8>, Int32);
 typedef DartEvaluateTestScripts = int Function(Pointer<Void> testContext, Pointer<NativeString>, Pointer<Utf8>, int);
 
 final DartEvaluateTestScripts _evaluateTestScripts =
     WebFDynamicLibrary.testRef.lookup<NativeFunction<NativeEvaluateTestScripts>>('evaluateTestScripts').asFunction();
 
-void evaluateTestScripts(int contextId, String code, {String url = 'test://', int line = 0}) {
+void evaluateTestScripts(double contextId, String code, {String url = 'test://', int line = 0}) {
   Pointer<Utf8> _url = (url).toNativeUtf8();
   _evaluateTestScripts(getAllocatedPage(contextId)!, stringToNativeString(code), _url, line);
 }
 
-typedef NativeExecuteCallback = Void Function(Int32 contextId, Pointer<NativeString> status);
-typedef DartExecuteCallback = void Function(int);
-typedef NativeExecuteTest = Void Function(Pointer<Void>, Pointer<NativeFunction<NativeExecuteCallback>>);
-typedef DartExecuteTest = void Function(Pointer<Void>, Pointer<NativeFunction<NativeExecuteCallback>>);
+typedef ExecuteCallbackResultCallback = Void Function(Handle context, Pointer<NativeString> result);
+typedef DartExecuteCallback = void Function(double);
+typedef NativeExecuteTest = Void Function(Pointer<Void>, Int64 profileId, Handle context,
+    Pointer<NativeFunction<ExecuteCallbackResultCallback>> resultCallback);
+typedef DartExecuteTest = void Function(Pointer<Void>, int profileId, Object context,
+    Pointer<NativeFunction<ExecuteCallbackResultCallback>> resultCallback);
 
 final DartExecuteTest _executeTest =
     WebFDynamicLibrary.testRef.lookup<NativeFunction<NativeExecuteTest>>('executeTest').asFunction();
 
-List<Completer<String>?> completerList = List.filled(10, null);
-
-void _executeTestCallback(int contextId, Pointer<NativeString> status) {
-  if (completerList[contextId] == null) return;
-  completerList[contextId]!.complete(nativeStringToString(status));
-  completerList[contextId] = null;
+class _ExecuteTestContext {
+  Completer<String> completer;
+  EvaluateOpItem? profileOp;
+  _ExecuteTestContext(this.completer, this.profileOp);
 }
 
-Future<String> executeTest(Pointer<Void> testContext, int contextId) async {
-  completerList[contextId] = Completer();
-  Pointer<NativeFunction<NativeExecuteCallback>> callback = Pointer.fromFunction(_executeTestCallback);
-  _executeTest(testContext, callback);
-  return completerList[contextId]!.future;
+void _handleExecuteTestResult(Object handle, Pointer<NativeString> resultData) {
+  _ExecuteTestContext context = handle as _ExecuteTestContext;
+  String status = nativeStringToString(resultData);
+  context.completer.complete(status);
+
+  if (enableWebFProfileTracking) {
+    WebFProfiler.instance.finishTrackEvaluate(context.profileOp!);
+  }
+}
+
+Future<String> executeTest(Pointer<Void> testContext, double contextId) async {
+  Completer<String> completer = Completer();
+
+  EvaluateOpItem? currentProfileOp;
+  if (enableWebFProfileTracking) {
+    currentProfileOp = WebFProfiler.instance.startTrackEvaluate('executeTest');
+  }
+
+  _ExecuteTestContext context = _ExecuteTestContext(completer, currentProfileOp);
+  Pointer<NativeFunction<ExecuteCallbackResultCallback>> callback = Pointer.fromFunction(_handleExecuteTestResult);
+  _executeTest(testContext, currentProfileOp?.hashCode ?? 0, context, callback);
+  return completer.future;
 }

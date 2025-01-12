@@ -5,6 +5,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/rendering.dart';
+import 'package:webf/foundation.dart';
 import 'package:webf/rendering.dart';
 import 'package:webf/css.dart';
 
@@ -169,9 +170,7 @@ class RenderFlexLayout extends RenderLayoutBox {
 
   @override
   void setupParentData(RenderBox child) {
-    if (child.parentData is! RenderLayoutParentData) {
-      child.parentData = RenderLayoutParentData();
-    }
+    child.parentData = RenderLayoutParentData();
     if (child is RenderBoxModel) {
       child.parentData = CSSPositionedLayout.getPositionParentData(child, child.parentData as RenderLayoutParentData);
     }
@@ -582,6 +581,9 @@ class RenderFlexLayout extends RenderLayoutBox {
 
   @override
   void performLayout() {
+    if (enableWebFProfileTracking) {
+      WebFProfiler.instance.startTrackLayout(this);
+    }
     doingThisLayout = true;
 
     _doPerformLayout();
@@ -591,10 +593,20 @@ class RenderFlexLayout extends RenderLayoutBox {
       needsRelayout = false;
     }
     doingThisLayout = false;
+    if (enableWebFProfileTracking) {
+      WebFProfiler.instance.finishTrackLayout(this);
+    }
   }
 
   void _doPerformLayout() {
+    if (enableWebFProfileTracking) {
+      WebFProfiler.instance.startTrackLayoutStep('RenderFlexLayout.beforeLayout');
+    }
     beforeLayout();
+
+    if (enableWebFProfileTracking) {
+      WebFProfiler.instance.finishTrackLayoutStep();
+    }
 
     List<RenderBoxModel> _positionedChildren = [];
     List<RenderPositionPlaceholder> _positionPlaceholderChildren = [];
@@ -748,6 +760,9 @@ class RenderFlexLayout extends RenderLayoutBox {
     // Info about each flex item in each flex line
     Map<int?, _RunChild> runChildren = {};
 
+    List<int> overflowHiddenNodeId = [];
+    double overflowHiddenNodeTotalMinWidth = 0;
+    double overflowNotHiddenNodeTotalWidth = 0;
     for (RenderBox child in children) {
       final RenderLayoutParentData? childParentData = child.parentData as RenderLayoutParentData?;
       BoxConstraints childConstraints;
@@ -835,8 +850,8 @@ class RenderFlexLayout extends RenderLayoutBox {
       // Baseline alignment in column direction behave the same as flex-start.
       AlignSelf alignSelf = _getAlignSelf(child);
       bool isBaselineAlign = alignSelf == AlignSelf.baseline || renderStyle.alignItems == AlignItems.baseline;
-
-      if (_isHorizontalFlexDirection && isBaselineAlign) {
+      bool isHorizontal = _isHorizontalFlexDirection;
+      if (isHorizontal && isBaselineAlign) {
         // Distance from top to baseline of child
         double childAscent = _getChildAscent(child);
         double? childMarginTop = 0;
@@ -858,9 +873,10 @@ class RenderFlexLayout extends RenderLayoutBox {
         runCrossAxisExtent = math.max(runCrossAxisExtent, childCrossAxisExtent);
       }
 
+      double _originalMainSize = _getMainSize(child, shouldUseIntrinsicMainSize: true);
       runChildren[childNodeId] = _RunChild(
         child,
-        _getMainSize(child, shouldUseIntrinsicMainSize: true),
+        _originalMainSize,
         0,
         false,
       );
@@ -877,9 +893,51 @@ class RenderFlexLayout extends RenderLayoutBox {
       if (flexShrink > 0) {
         totalFlexShrink += flexShrink;
       }
+      if (isHorizontal && child is RenderBoxModel) {
+        if (child.renderStyle.overflowX == CSSOverflowType.hidden) {
+          overflowHiddenNodeId.add(childNodeId);
+          overflowHiddenNodeTotalMinWidth += child.contentConstraints?.minWidth ?? 0;
+        } else {
+          overflowNotHiddenNodeTotalWidth += _originalMainSize;
+        }
+      }
     }
 
     if (runChildren.isNotEmpty) {
+      if (overflowHiddenNodeId.isNotEmpty && runMainAxisExtent > flexLineLimit && overflowHiddenNodeTotalMinWidth < flexLineLimit) {
+        int _overflowNodeSize = overflowHiddenNodeId.length;
+        double overWidth = flexLineLimit - overflowNotHiddenNodeTotalWidth;
+        double avgOverWidth = overWidth / _overflowNodeSize;
+        int index = 0;
+        for (int nodeId in overflowHiddenNodeId) {
+          _RunChild? _runChild = runChildren[nodeId];
+          if (_runChild != null) {
+            index += 1;
+            if (overWidth <= 0) {// the remaining width is less than 0.
+              BoxConstraints oldConstraints = _runChild.child.constraints;
+              double _minWidth = oldConstraints.minWidth;
+              _runChild.child.layout(BoxConstraints(minWidth: _minWidth, maxWidth: _minWidth, minHeight: oldConstraints.minHeight, maxHeight: oldConstraints.maxHeight), parentUsesSize: true);
+              _runChild.originalMainSize = _minWidth;
+              _childrenIntrinsicMainSizes[nodeId] = _minWidth;
+            } else if (_runChild.originalMainSize <= avgOverWidth) {// the actual width of a subwidget is less than the average value of the remaining width.
+              // The child does not need layout calculations; adjust the average value.
+              overWidth -= _runChild.originalMainSize;
+              avgOverWidth = overWidth / (_overflowNodeSize - index);
+            } else {
+              BoxConstraints oldConstraints = _runChild.child.constraints;
+              double _minWidth = oldConstraints.minWidth;
+              double _maxWidth = avgOverWidth;
+              if (_minWidth > _maxWidth) {
+                _maxWidth = _minWidth;
+              }
+              _runChild.child.layout(BoxConstraints(minWidth: _minWidth, maxWidth: _maxWidth, minHeight: oldConstraints.minHeight, maxHeight: oldConstraints.maxHeight), parentUsesSize: true);
+              _runChild.originalMainSize = avgOverWidth;
+              _childrenIntrinsicMainSizes[nodeId] = avgOverWidth;
+            }
+          }
+        }
+        runMainAxisExtent = flexLineLimit;
+      }
       _runMetrics.add(_RunMetrics(
           runMainAxisExtent, runCrossAxisExtent, totalFlexGrow, totalFlexShrink, maxSizeAboveBaseline, runChildren, 0));
     }
@@ -1055,18 +1113,19 @@ class RenderFlexLayout extends RenderLayoutBox {
 
       flexedMainSize = computedSize;
 
+      double minFlexPrecision = 0.5;
       // Find all the violations by comparing min and max size of flex items.
       if (child is RenderBoxModel && !_isChildMainAxisClip(child)) {
         double minMainAxisSize = _getMinMainAxisSize(child);
         double maxMainAxisSize = _getMaxMainAxisSize(child);
-        if (computedSize < minMainAxisSize) {
+        if (computedSize < minMainAxisSize && (computedSize - minMainAxisSize).abs() >= minFlexPrecision ) {
           flexedMainSize = minMainAxisSize;
-        } else if (computedSize > maxMainAxisSize) {
+        } else if (computedSize > maxMainAxisSize && (computedSize - minMainAxisSize).abs() >= minFlexPrecision ) {
           flexedMainSize = maxMainAxisSize;
         }
       }
 
-      double violation = flexedMainSize - computedSize;
+      double violation = (flexedMainSize - computedSize).abs() >= minFlexPrecision ? flexedMainSize - computedSize : 0;
 
       // Collect all the flex items with violations.
       if (violation > 0) {
@@ -1181,11 +1240,20 @@ class RenderFlexLayout extends RenderLayoutBox {
       double initialFreeSpace = isMainSizeDefinite ? (maxMainSize ?? 0) - totalSpace : 0;
 
       double layoutContentMainSize = _isHorizontalFlexDirection ? contentSize.width : contentSize.height;
+      double minMainAxisSize = _getMinMainAxisSize(this);
       // Flexbox with minSize on main axis when maxMainSize < minSize && maxMainSize < RenderBox.Size, adapt freeSpace
       if (maxMainSize != null &&
-          (maxMainSize < _getMinMainAxisSize(this) || maxMainSize < layoutContentMainSize) &&
+          (maxMainSize < minMainAxisSize || maxMainSize < layoutContentMainSize) &&
           initialFreeSpace == 0) {
-        maxMainSize = math.max(layoutContentMainSize, _getMinMainAxisSize(this));
+        maxMainSize = math.max(layoutContentMainSize, minMainAxisSize);
+
+        double maxMainConstraints = _isHorizontalFlexDirection ? contentConstraints!.maxWidth : contentConstraints!.maxHeight;
+        // determining isScrollingContentBox is to reduce the scope of influence
+        if (isScrollingContentBox && maxMainConstraints.isFinite) {
+          maxMainSize = totalFlexShrink > 0 ? math.min(maxMainSize, maxMainConstraints) : maxMainSize;
+          maxMainSize = totalFlexGrow > 0 ? math.max(maxMainSize, maxMainConstraints) : maxMainSize;
+        }
+
         initialFreeSpace = maxMainSize - totalSpace;
       }
 
@@ -2062,8 +2130,8 @@ class RenderFlexLayout extends RenderLayoutBox {
     // The absolutely-positioned box is considered to be “fixed-size”, a value of stretch
     // is treated the same as flex-start.
     // https://www.w3.org/TR/css-flexbox-1/#abspos-items
-    final RenderLayoutParentData childParentData = child.parentData as RenderLayoutParentData;
-    if (child is! RenderBoxModel || child is RenderLineBreak || (childParentData.isPositioned)) {
+    final ParentData? childParentData = child.parentData;
+    if (child is! RenderBoxModel || child is RenderLineBreak || (childParentData is RenderLayoutParentData && childParentData.isPositioned)) {
       return false;
     }
 
@@ -2354,9 +2422,11 @@ class RenderFlexLayout extends RenderLayoutBox {
   static bool _isPlaceholderPositioned(RenderObject child) {
     if (child is RenderPositionPlaceholder) {
       RenderBoxModel realDisplayedBox = child.positioned!;
-      RenderLayoutParentData parentData = realDisplayedBox.parentData as RenderLayoutParentData;
-      if (parentData.isPositioned) {
-        return true;
+      if (realDisplayedBox.attached) {
+        RenderLayoutParentData? parentData = realDisplayedBox.parentData as RenderLayoutParentData?;
+        if (parentData?.isPositioned == true) {
+          return true;
+        }
       }
     }
     return false;

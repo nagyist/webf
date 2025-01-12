@@ -5,10 +5,13 @@
 
 import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:ui';
 
 import 'package:flutter/painting.dart';
 import 'package:flutter/rendering.dart';
+import 'package:webf/dom.dart';
 import 'package:webf/painting.dart';
+import 'package:webf/html.dart';
 import 'package:webf/css.dart';
 import 'package:webf/launcher.dart';
 import 'package:webf/rendering.dart';
@@ -176,6 +179,10 @@ mixin CSSBackgroundMixin on RenderStyle {
 
   set backgroundImage(CSSBackgroundImage? value) {
     if (value == _backgroundImage) return;
+    if (_backgroundImage != null) {
+      _backgroundImage!.dispose();
+    }
+
     _backgroundImage = value;
     renderBoxModel?.markNeedsPaint();
   }
@@ -253,6 +260,26 @@ class CSSBackgroundImage {
 
   ImageProvider? _image;
 
+  static Future<ImageLoadResponse> _obtainImage(Element element, Uri url) async {
+    ImageRequest request = ImageRequest.fromUri(url);
+    // Increment count when request.
+    element.ownerDocument.controller.view.document.incrementRequestCount();
+
+    ImageLoadResponse data = await request.obtainImage(element.ownerDocument.controller);
+
+    // Decrement count when response.
+    element.ownerDocument.controller.view.document.decrementRequestCount();
+    return data;
+  }
+
+  static void _handleBitFitImageLoad(
+      Element element, int naturalWidth, int naturalHeight, int frameCount) {
+    if (frameCount > 1 && !element.isRepaintBoundary) {
+      element.forceToRepaintBoundary = true;
+      element.renderBoxModel!.invalidateBoxPainter();
+    }
+  }
+
   ImageProvider? get image {
     if (_image != null) return _image;
     for (CSSFunctionalNotation method in functions) {
@@ -267,8 +294,15 @@ class CSSBackgroundImage {
         Uri uri = Uri.parse(url);
         if (url.isNotEmpty) {
           uri = controller.uriParser!.resolve(Uri.parse(baseHref ?? controller.url), uri);
-          _image = getImageProvider(uri, contextId: controller.view.contextId);
-          return _image;
+          FlutterView ownerFlutterView = controller.ownerFlutterView;
+          return _image = BoxFitImage(
+            boxFit: renderStyle.backgroundSize.fit,
+            url: uri,
+            controller: controller,
+            targetElementPtr: renderStyle.target.pointer!,
+            loadImage: _obtainImage,
+            onImageLoad: _handleBitFitImageLoad,
+            devicePixelRatio: ownerFlutterView.devicePixelRatio);
         }
       }
     }
@@ -453,8 +487,6 @@ class CSSBackgroundImage {
       switch (image.runtimeType) {
         case NetworkImage:
           return (image as NetworkImage).url;
-        case CachedNetworkImage:
-          return (image as CachedNetworkImage).url;
         case FileImage:
           return (image as FileImage).file.uri.path;
         case MemoryImage:
@@ -478,6 +510,10 @@ class CSSBackgroundImage {
       }
     }
     return 'none';
+  }
+
+  void dispose() {
+    _image = null;
   }
 }
 
@@ -678,8 +714,8 @@ class CSSBackground {
   }
 }
 
-void _applyColorAndStops(int start, List<String> args, List<Color> colors, List<double> stops,
-    RenderStyle renderStyle, String propertyName,
+void _applyColorAndStops(
+    int start, List<String> args, List<Color> colors, List<double> stops, RenderStyle renderStyle, String propertyName,
     [double? gradientLength]) {
   // colors should more than one, otherwise invalid
   if (args.length - start - 1 > 0) {

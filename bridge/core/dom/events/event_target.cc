@@ -2,11 +2,12 @@
  * Copyright (C) 2019-2022 The Kraken authors. All rights reserved.
  * Copyright (C) 2022-present The WebF authors. All rights reserved.
  */
-#include "event_target.h"
+#include "plugin_api/event_target.h"
 #include <cstdint>
 #include "binding_call_methods.h"
 #include "bindings/qjs/converter_impl.h"
 #include "event_factory.h"
+#include "event_target.h"
 #include "include/dart_api.h"
 #include "native_value_converter.h"
 #include "qjs_add_event_listener_options.h"
@@ -78,6 +79,8 @@ bool EventTarget::addEventListener(const AtomicString& event_type,
                                    const std::shared_ptr<EventListener>& event_listener,
                                    const std::shared_ptr<QJSUnionAddEventListenerOptionsBoolean>& options,
                                    ExceptionState& exception_state) {
+  if (event_listener == nullptr)
+    return false;
   std::shared_ptr<AddEventListenerOptions> event_listener_options;
   if (options == nullptr) {
     event_listener_options = AddEventListenerOptions::Create();
@@ -97,6 +100,13 @@ bool EventTarget::addEventListener(const AtomicString& event_type,
                                    const std::shared_ptr<EventListener>& event_listener,
                                    ExceptionState& exception_state) {
   std::shared_ptr<AddEventListenerOptions> options = AddEventListenerOptions::Create();
+  return AddEventListenerInternal(event_type, event_listener, options);
+}
+
+bool EventTarget::addEventListener(const webf::AtomicString& event_type,
+                                   const std::shared_ptr<EventListener>& event_listener,
+                                   const std::shared_ptr<AddEventListenerOptions>& options,
+                                   ExceptionState& exception_state) {
   return AddEventListenerInternal(event_type, event_listener, options);
 }
 
@@ -149,6 +159,8 @@ bool EventTarget::dispatchEvent(Event* event, ExceptionState& exception_state) {
 
   if (!GetExecutingContext())
     return false;
+
+  MemberMutationScope scope{GetExecutingContext()};
 
   event->SetTrusted(false);
 
@@ -246,6 +258,11 @@ bool EventTarget::IsEventTarget() const {
   return true;
 }
 
+const EventTargetPublicMethods* EventTarget::eventTargetPublicMethods() {
+  static EventTargetPublicMethods event_target_public_methods;
+  return &event_target_public_methods;
+}
+
 void EventTarget::Trace(GCVisitor* visitor) const {
   ScriptWrappable::Trace(visitor);
   BindingObject::Trace(visitor);
@@ -279,7 +296,7 @@ bool EventTarget::AddEventListenerInternal(const AtomicString& event_type,
       listener_options->passive = options->passive();
     }
 
-    GetExecutingContext()->uiCommandBuffer()->addCommand(
+    GetExecutingContext()->uiCommandBuffer()->AddCommand(
         UICommand::kAddEvent, std::move(event_type.ToNativeString(ctx())), bindingObject(), listener_options);
   }
 
@@ -327,7 +344,7 @@ bool EventTarget::RemoveEventListenerInternal(const AtomicString& event_type,
   if (listener_count == 0) {
     bool has_capture = options->hasCapture() && options->capture();
 
-    GetExecutingContext()->uiCommandBuffer()->addCommand(UICommand::kRemoveEvent,
+    GetExecutingContext()->uiCommandBuffer()->AddCommand(UICommand::kRemoveEvent,
                                                          std::move(event_type.ToNativeString(ctx())), bindingObject(),
                                                          has_capture ? (void*)0x01 : nullptr);
   }
@@ -360,6 +377,8 @@ NativeValue EventTarget::HandleCallFromDartSide(const AtomicString& method,
 }
 
 NativeValue EventTarget::HandleDispatchEventFromDart(int32_t argc, const NativeValue* argv, Dart_Handle dart_object) {
+  GetExecutingContext()->dartIsolateContext()->profiler()->StartTrackSteps("EventTarget::HandleDispatchEventFromDart");
+
   assert(argc >= 2);
   NativeValue native_event_type = argv[0];
   NativeValue native_is_capture = argv[2];
@@ -371,6 +390,12 @@ NativeValue EventTarget::HandleDispatchEventFromDart(int32_t argc, const NativeV
   Event* event = EventFactory::Create(GetExecutingContext(), event_type, raw_event);
   assert(event->target() != nullptr);
   assert(event->currentTarget() != nullptr);
+
+  auto* window = DynamicTo<Window>(event->target());
+  if (window != nullptr && (event->type() == event_type_names::kload || event->type() == event_type_names::kgcopen)) {
+    window->OnLoadEventFired();
+  }
+
   ExceptionState exception_state;
   event->SetTrusted(false);
   event->SetEventPhase(Event::kAtTarget);
@@ -379,23 +404,43 @@ NativeValue EventTarget::HandleDispatchEventFromDart(int32_t argc, const NativeV
 
   auto* wire = new DartWireContext();
   wire->jsObject = event->ToValue();
+  wire->is_dedicated = GetExecutingContext()->isDedicated();
+  wire->context_id = GetExecutingContext()->contextId();
+  wire->dispatcher = GetDispatcher();
+  wire->disposed = false;
 
   auto dart_object_finalize_callback = [](void* isolate_callback_data, void* peer) {
     auto* wire = (DartWireContext*)(peer);
-    if (IsDartWireAlive(wire)) {
-      DeleteDartWire(wire);
-    }
+
+    if (wire->disposed)
+      return;
+
+    wire->dispatcher->PostToJs(
+        wire->is_dedicated, wire->context_id,
+        [](DartWireContext* wire) -> void {
+          if (IsDartWireAlive(wire)) {
+            DeleteDartWire(wire);
+          }
+        },
+        wire);
   };
 
   WatchDartWire(wire);
-  Dart_NewFinalizableHandle_DL(dart_object, reinterpret_cast<void*>(wire), sizeof(DartWireContext),
-                               dart_object_finalize_callback);
+
+  GetDispatcher()->PostToDart(
+      GetExecutingContext()->isDedicated(),
+      [](Dart_Handle object, void* peer, intptr_t external_allocation_size, Dart_HandleFinalizer callback) {
+        Dart_NewFinalizableHandle_DL(object, peer, external_allocation_size, callback);
+      },
+      dart_object, reinterpret_cast<void*>(wire), sizeof(DartWireContext), dart_object_finalize_callback);
 
   if (exception_state.HasException()) {
     JSValue error = JS_GetException(ctx());
     GetExecutingContext()->ReportError(error);
     JS_FreeValue(ctx(), error);
   }
+
+  GetExecutingContext()->dartIsolateContext()->profiler()->FinishTrackSteps();
 
   auto* result = new EventDispatchResult{.canceled = dispatch_result == DispatchEventResult::kCanceledByEventHandler,
                                          .propagationStopped = event->propagationStopped()};

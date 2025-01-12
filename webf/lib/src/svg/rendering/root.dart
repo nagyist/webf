@@ -3,16 +3,17 @@
  */
 
 import 'package:flutter/rendering.dart';
+import 'package:webf/foundation.dart';
 import 'package:webf/svg.dart';
 
-import '../core/aspect_ratio.dart';
+import '../aspect_ratio.dart';
 import 'container.dart';
 
 class RenderSVGRoot extends RenderSVGContainer {
   Rect? _viewBox;
 
   // the developer provided viewbox, maybe is null
-  get viewBox => _viewBox;
+  Rect? get viewBox => _viewBox;
 
   set viewBox(value) {
     _viewBox = value;
@@ -42,11 +43,10 @@ class RenderSVGRoot extends RenderSVGContainer {
 
   RenderSVGRoot({
     required super.renderStyle,
-    super.element,
     Rect? viewBox,
-    SVGPreserveAspectRatio ratio = const SVGPreserveAspectRatio(),
+    SVGPreserveAspectRatio? ratio,
   })  : _viewBox = viewBox,
-        _ratio = ratio {}
+        _ratio = ratio ?? const SVGPreserveAspectRatio() {}
 
   @override
   void performPaint(PaintingContext context, Offset offset) {
@@ -58,9 +58,15 @@ class RenderSVGRoot extends RenderSVGContainer {
         _innerClipLayer.layer = context
             .pushClipRect(false, offset, _renderViewBox, (context, offset) {
           // Draw debug rect
-          // context.canvas.drawRect(_viewBox, Paint()..color = Color.fromARGB(255, 255, 0, 0)..style = PaintingStyle.stroke);
+          // context.canvas.drawRect(_renderViewBox, Paint()..color = Color.fromARGB(255, 255, 0, 0)..style = PaintingStyle.stroke);
           visitChildren((child) {
+            if (enableWebFProfileTracking) {
+              WebFProfiler.instance.pauseCurrentPaintOp();
+            }
             context.paintChild(child, offset);
+            if (enableWebFProfileTracking) {
+              WebFProfiler.instance.resumeCurrentPaintOp();
+            }
           });
         }, oldLayer: _innerClipLayer.layer);
       }, oldLayer: _transformLayer.layer);
@@ -81,14 +87,16 @@ class RenderSVGRoot extends RenderSVGContainer {
     width = width.isInfinite ? DEFAULT_VIEW_BOX_WIDTH : width;
     height = height.isInfinite ? DEFAULT_VIEW_BOX_HEIGHT : height;
 
-    size = Size(width, height);
+    final biggestSize = constraints.biggest;
+
+    size = biggestSize.isFinite ? biggestSize : constraints.constrain(Size(width, height));
 
     if (_viewBox == null) {
       // When viewBox is not valid, should use width/height
       // To keep same behavior with Chrome
       _renderViewBox = Rect.fromLTWH(0, 0, width, height);
     } else {
-      _renderViewBox = viewBox;
+      _renderViewBox = viewBox ?? _renderViewBox;
     }
 
     visitChildren((child) {

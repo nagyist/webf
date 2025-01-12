@@ -18,7 +18,7 @@
 namespace webf {
 
 Window::Window(ExecutingContext* context) : EventTargetWithInlineData(context) {
-  context->uiCommandBuffer()->addCommand(UICommand::kCreateWindow, nullptr, (void*)bindingObject(), nullptr);
+  context->uiCommandBuffer()->AddCommand(UICommand::kCreateWindow, nullptr, bindingObject(), nullptr);
 }
 
 // https://infra.spec.whatwg.org/#ascii-whitespace
@@ -34,22 +34,32 @@ AtomicString Window::btoa(const AtomicString& source, ExceptionState& exception_
     return AtomicString::Empty();
   size_t encode_len = modp_b64_encode_data_len(source.length());
   std::vector<char> buffer;
-  buffer.resize(encode_len);
+  buffer.resize(encode_len + 1);
 
-  const size_t output_size = modp_b64_encode_data(reinterpret_cast<char*>(buffer.data()),
-                                                  reinterpret_cast<const char*>(source.Character8()), source.length());
+  std::string source_string = source.ToStdString(ctx());
+
+  const size_t output_size =
+      modp_b64_encode(reinterpret_cast<char*>(buffer.data()), source_string.c_str(), source.length());
+  const char* encode_str = buffer.data();
+  const size_t encode_str_len = strlen(encode_str);
+
   assert(output_size == encode_len);
-
-  return {ctx(), buffer.data(), buffer.size()};
+  if (output_size != encode_len || encode_str_len == 0) {
+    exception_state.ThrowException(ctx(), ErrorType::TypeError, "The string encode failed.");
+    return AtomicString::Empty();
+  }
+  return {ctx(), encode_str, encode_str_len};
 }
 
 // Invokes modp_b64 without stripping whitespace.
-bool Base64DecodeRaw(const AtomicString& in, std::vector<uint8_t>& out, ModpDecodePolicy policy) {
+bool Base64DecodeRaw(JSContext* ctx, const AtomicString& in, std::vector<uint8_t>& out, ModpDecodePolicy policy) {
   size_t decode_len = modp_b64_decode_len(in.length());
   out.resize(decode_len);
 
-  const size_t output_size = modp_b64_decode(reinterpret_cast<char*>(out.data()),
-                                             reinterpret_cast<const char*>(in.Character8()), in.length(), policy);
+  std::string in_string = in.ToStdString(ctx);
+
+  const size_t output_size =
+      modp_b64_decode(reinterpret_cast<char*>(out.data()), in_string.c_str(), in.length(), policy);
   if (output_size == MODP_B64_ERROR)
     return false;
   out.resize(output_size);
@@ -68,11 +78,11 @@ bool Base64Decode(JSContext* ctx, AtomicString in, std::vector<uint8_t>& out, Mo
       // TODO(csharrison): Most callers use String inputs so ToString() should
       // be fast. Still, we should add a RemoveCharacters method to StringView
       // to avoid a double allocation for non-String-backed StringViews.
-      return Base64DecodeRaw(in, out, policy) ||
-             Base64DecodeRaw(in.RemoveCharacters(ctx, &IsAsciiWhitespace), out, policy);
+      return Base64DecodeRaw(ctx, in, out, policy) ||
+             Base64DecodeRaw(ctx, in.RemoveCharacters(ctx, &IsAsciiWhitespace), out, policy);
     }
     case ModpDecodePolicy::kNoPaddingValidation: {
-      return Base64DecodeRaw(in, out, policy);
+      return Base64DecodeRaw(ctx, in, out, policy);
     }
     case ModpDecodePolicy::kStrict:
       return false;
@@ -109,15 +119,21 @@ Window* Window::open(const AtomicString& url, ExceptionState& exception_state) {
   const NativeValue args[] = {
       NativeValueConverter<NativeTypeString>::ToNativeValue(ctx(), url),
   };
-  InvokeBindingMethod(binding_call_methods::kopen, 1, args, exception_state);
+  InvokeBindingMethod(binding_call_methods::kopen, 1, args, FlushUICommandReason::kDependentsOnElement,
+                      exception_state);
   return this;
 }
 
 Screen* Window::screen() {
   if (screen_ == nullptr) {
-    NativeValue value = GetBindingProperty(binding_call_methods::kscreen, ASSERT_NO_EXCEPTION());
-    screen_ = MakeGarbageCollected<Screen>(
-        this, NativeValueConverter<NativeTypePointer<NativeBindingObject>>::FromNativeValue(value));
+    NativeValue value = GetBindingProperty(
+        binding_call_methods::kscreen,
+        FlushUICommandReason::kDependentsOnElement | FlushUICommandReason::kDependentsOnLayout, ASSERT_NO_EXCEPTION());
+    NativeBindingObject* native_binding_object =
+        NativeValueConverter<NativeTypePointer<NativeBindingObject>>::FromNativeValue(value);
+    if (native_binding_object == nullptr)
+      return nullptr;
+    screen_ = MakeGarbageCollected<Screen>(this, native_binding_object);
   }
   return screen_;
 }
@@ -131,7 +147,9 @@ void Window::scroll(double x, double y, ExceptionState& exception_state) {
       NativeValueConverter<NativeTypeDouble>::ToNativeValue(x),
       NativeValueConverter<NativeTypeDouble>::ToNativeValue(y),
   };
-  InvokeBindingMethod(binding_call_methods::kscroll, 2, args, exception_state);
+  InvokeBindingMethod(binding_call_methods::kscroll, 2, args,
+                      FlushUICommandReason::kDependentsOnElement | FlushUICommandReason::kDependentsOnLayout,
+                      exception_state);
 }
 
 void Window::scroll(const std::shared_ptr<ScrollToOptions>& options, ExceptionState& exception_state) {
@@ -139,7 +157,9 @@ void Window::scroll(const std::shared_ptr<ScrollToOptions>& options, ExceptionSt
       NativeValueConverter<NativeTypeDouble>::ToNativeValue(options->hasLeft() ? options->left() : 0.0),
       NativeValueConverter<NativeTypeDouble>::ToNativeValue(options->hasTop() ? options->top() : 0.0),
   };
-  InvokeBindingMethod(binding_call_methods::kscroll, 2, args, exception_state);
+  InvokeBindingMethod(binding_call_methods::kscroll, 2, args,
+                      FlushUICommandReason::kDependentsOnElement | FlushUICommandReason::kDependentsOnLayout,
+                      exception_state);
 }
 
 void Window::scrollBy(ExceptionState& exception_state) {
@@ -151,7 +171,9 @@ void Window::scrollBy(double x, double y, ExceptionState& exception_state) {
       NativeValueConverter<NativeTypeDouble>::ToNativeValue(x),
       NativeValueConverter<NativeTypeDouble>::ToNativeValue(y),
   };
-  InvokeBindingMethod(binding_call_methods::kscrollBy, 2, args, exception_state);
+  InvokeBindingMethod(binding_call_methods::kscrollBy, 2, args,
+                      FlushUICommandReason::kDependentsOnElement | FlushUICommandReason::kDependentsOnLayout,
+                      exception_state);
 }
 
 void Window::scrollBy(const std::shared_ptr<ScrollToOptions>& options, ExceptionState& exception_state) {
@@ -159,7 +181,9 @@ void Window::scrollBy(const std::shared_ptr<ScrollToOptions>& options, Exception
       NativeValueConverter<NativeTypeDouble>::ToNativeValue(options->hasLeft() ? options->left() : 0.0),
       NativeValueConverter<NativeTypeDouble>::ToNativeValue(options->hasTop() ? options->top() : 0.0),
   };
-  InvokeBindingMethod(binding_call_methods::kscrollBy, 2, args, exception_state);
+  InvokeBindingMethod(binding_call_methods::kscrollBy, 2, args,
+                      FlushUICommandReason::kDependentsOnElement | FlushUICommandReason::kDependentsOnLayout,
+                      exception_state);
 }
 
 void Window::scrollTo(ExceptionState& exception_state) {
@@ -195,9 +219,17 @@ void Window::postMessage(const ScriptValue& message,
 
 ComputedCssStyleDeclaration* Window::getComputedStyle(Element* element, ExceptionState& exception_state) {
   NativeValue arguments[] = {NativeValueConverter<NativeTypePointer<Element>>::ToNativeValue(element)};
-  NativeValue result = InvokeBindingMethod(binding_call_methods::kgetComputedStyle, 1, arguments, exception_state);
-  return MakeGarbageCollected<ComputedCssStyleDeclaration>(
-      GetExecutingContext(), NativeValueConverter<NativeTypePointer<NativeBindingObject>>::FromNativeValue(result));
+  NativeValue result = InvokeBindingMethod(
+      binding_call_methods::kgetComputedStyle, 1, arguments,
+      FlushUICommandReason::kDependentsOnElement | FlushUICommandReason::kDependentsOnLayout, exception_state);
+
+  NativeBindingObject* native_binding_object =
+      NativeValueConverter<NativeTypePointer<NativeBindingObject>>::FromNativeValue(result);
+
+  if (native_binding_object == nullptr)
+    return nullptr;
+
+  return MakeGarbageCollected<ComputedCssStyleDeclaration>(GetExecutingContext(), native_binding_object);
 }
 
 ComputedCssStyleDeclaration* Window::getComputedStyle(Element* element,
@@ -207,14 +239,7 @@ ComputedCssStyleDeclaration* Window::getComputedStyle(Element* element,
 }
 
 double Window::requestAnimationFrame(const std::shared_ptr<QJSFunction>& callback, ExceptionState& exceptionState) {
-  if (GetExecutingContext()->dartMethodPtr()->flushUICommand == nullptr) {
-    exceptionState.ThrowException(ctx(), ErrorType::InternalError,
-                                  "Failed to execute 'flushUICommand': dart method (flushUICommand) executed "
-                                  "with unexpected error.");
-    return 0;
-  }
-
-  GetExecutingContext()->FlushUICommand();
+  GetExecutingContext()->FlushUICommand(this, FlushUICommandReason::kStandard);
   auto frame_callback = FrameCallback::Create(GetExecutingContext(), callback);
   uint32_t request_id = GetExecutingContext()->document()->RequestAnimationFrame(frame_callback, exceptionState);
   // `-1` represents some error occurred.
@@ -232,6 +257,10 @@ void Window::cancelAnimationFrame(double request_id, ExceptionState& exception_s
   GetExecutingContext()->document()->CancelAnimationFrame(static_cast<uint32_t>(request_id), exception_state);
 }
 
+void Window::OnLoadEventFired() {
+  GetExecutingContext()->TurnOnJavaScriptGC();
+}
+
 bool Window::IsWindowOrWorkerGlobalScope() const {
   return true;
 }
@@ -239,6 +268,11 @@ bool Window::IsWindowOrWorkerGlobalScope() const {
 void Window::Trace(GCVisitor* visitor) const {
   visitor->TraceMember(screen_);
   EventTargetWithInlineData::Trace(visitor);
+}
+
+const WindowPublicMethods* Window::windowPublicMethods() {
+  static WindowPublicMethods window_public_methods;
+  return &window_public_methods;
 }
 
 JSValue Window::ToQuickJS() const {

@@ -18,3 +18,15 @@ export 'src/svg/circle.dart';
 export 'src/svg/ellipse.dart';
 export 'src/svg/style.dart';
 export 'src/svg/line.dart';
+export 'src/svg/constants.dart';
+export 'src/svg/svg_render_object_builder.dart';
+export 'src/svg/rendering/root.dart';
+export 'src/svg/rendering/shape.dart';
+export 'src/svg/rendering/text.dart';
+export 'src/svg/attribute.dart';
+export 'src/svg/defs.dart';
+export 'src/svg/linear_gradient.dart';
+export 'src/svg/gradient_stop.dart';
+export 'src/svg/clip_path.dart';
+
+

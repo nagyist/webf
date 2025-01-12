@@ -16,9 +16,13 @@ HTMLCanvasElement::HTMLCanvasElement(Document& document) : HTMLElement(html_name
 
 CanvasRenderingContext* HTMLCanvasElement::getContext(const AtomicString& type, ExceptionState& exception_state) {
   NativeValue arguments[] = {NativeValueConverter<NativeTypeString>::ToNativeValue(ctx(), type)};
-  NativeValue value = InvokeBindingMethod(binding_call_methods::kgetContext, 1, arguments, exception_state);
+  NativeValue value = InvokeBindingMethod(binding_call_methods::kgetContext, 1, arguments,
+                                          FlushUICommandReason::kDependentsOnElement, exception_state);
   NativeBindingObject* native_binding_object =
       NativeValueConverter<NativeTypePointer<NativeBindingObject>>::FromNativeValue(value);
+
+  if (native_binding_object == nullptr)
+    return nullptr;
 
   if (type == canvas_types::k2d) {
     CanvasRenderingContext* context =
@@ -35,6 +39,11 @@ void HTMLCanvasElement::Trace(GCVisitor* visitor) const {
     visitor->TraceMember(context);
   }
   HTMLElement::Trace(visitor);
+}
+
+const HTMLCanvasElementPublicMethods* HTMLCanvasElement::htmlCanvasElementPublicMethods() {
+  static HTMLCanvasElementPublicMethods html_canvas_element_public_methods;
+  return &html_canvas_element_public_methods;
 }
 
 }  // namespace webf

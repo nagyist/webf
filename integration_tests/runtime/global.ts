@@ -50,6 +50,15 @@ function xtest(fn, title) {
 }
 
 function assert_equals(a: any, b: any, message?: string) {
+  if(typeof a != typeof b) {
+    fail(message)
+    return;
+  }
+  if (b !== b) {
+    // NaN case 
+    expect(a !== a).toBe(true, message);
+    return;
+  }
   expect(a).toBe(b, message)
 }
 
@@ -65,11 +74,40 @@ function assert_throws_exactly(error: any, fn: Function) {
   expect(fn).toThrow(error);
 }
 
+function assert_throws(error: any, fn: Function) {
+  expect(fn).toThrow();
+}
+
 function assert_not_equals(a: any, b: any, message?: string) {
   expect(a !== b).toBe(true, message)
 }
 function assert_false(value: any, message?: string) {
   expect(value).toBe(false, message)
+}
+
+/**
+     * Assert that ``actual`` is within ± ``epsilon`` of ``expected``.
+     *
+     * @param {number} actual - Test value.
+     * @param {number} expected - Value number is expected to be close to.
+     * @param {number} epsilon - Magnitude of allowed difference between ``actual`` and ``expected``.
+     * @param {string} [description] - Description of the condition being tested.
+     */
+function assert_approx_equals(actual, expected, epsilon, description)
+{
+    /*
+     * Test if two primitive numbers are equal within +/- epsilon
+     */
+    description = description + ", actual value is " + actual;
+    assert_true(typeof actual === "number", description);
+
+    // The epsilon math below does not place nice with NaN and Infinity
+    // But in this case Infinity = Infinity and NaN = NaN
+    if (isFinite(actual) || isFinite(expected)) {
+        assert_true(Math.abs(actual - expected) <= epsilon, description);
+    } else {
+        assert_equals(actual, expected);
+    }
 }
 
 function format_value(v: any) {
@@ -254,36 +292,111 @@ async function simulateSwipe(startX: number, startY: number, endX: number, endY:
 
 // Simulate an point down action.
 async function simulatePointDown(x: number, y: number, pointer: number = 0) {
-  await simulatePointer([
-    [x, y, PointerChange.down],
-  ], pointer);
+  return new Promise(async (resolve) => {
+    requestAnimationFrame(async () => {
+      await simulatePointer([
+        [x, y, PointerChange.down],
+      ], pointer);
+      resolve();
+    });
+  });
 }
 
 async function simulatePointMove(x: number, y: number, pointer: number = 0) {
-  await simulatePointer([
-    [x, y, PointerChange.move],
-  ], pointer);
+  return new Promise((resolve) => {
+    requestAnimationFrame(async () => {
+      await simulatePointer([
+        [x, y, PointerChange.move],
+      ], pointer);
+      resolve();
+    });
+  });
 }
 
 async function simulatePointAdd(x: number, y: number, pointer: number = 0) {
-  await simulatePointer([
-    [x, y, PointerChange.add],
-  ], pointer);
+  return new Promise(resolve => {
+    requestAnimationFrame(async () => {
+      await simulatePointer([
+        [x, y, PointerChange.add],
+      ], pointer);
+      resolve();
+    });
+  });
 }
 
 
 async function simulatePointRemove(x: number, y: number, pointer: number = 0) {
-  await simulatePointer([
-    [x, y, PointerChange.remove],
-  ], pointer);
+  return new Promise(resolve => {
+    requestAnimationFrame(async () => {
+      await simulatePointer([
+        [x, y, PointerChange.remove],
+      ], pointer);
+      resolve();
+    });
+  });
 }
 
 
 // Simulate an point up action.
 async function simulatePointUp(x: number, y: number, pointer: number = 0) {
-  await simulatePointer([
-    [x, y, PointerChange.up]
-  ], pointer);
+  return new Promise(resolve => {
+    requestAnimationFrame(async () => {
+      await simulatePointer([
+        [x, y, PointerChange.up]
+      ], pointer);
+      resolve();
+    });
+  });
+}
+
+function onDoubleImageLoad(img1: HTMLImageElement, img2: HTMLImageElement, onLoadCallback: () => Promise<void>) {
+  let count = 0;
+  async function onLoad() {
+    count++;
+    if (count >= 2) {
+      await onLoadCallback();
+    }
+  }
+
+  img1.addEventListener('load', onLoad);
+  img2.addEventListener('load', onLoad);
+}
+
+function onTripleImageLoad(img1: HTMLImageElement, img2: HTMLImageElement, img3: HTMLImageElement, onLoadCallback: () => Promise<void>) {
+  let count = 0;
+  async function onLoad() {
+    count++;
+    if (count >= 3) {
+      await onLoadCallback();
+    }
+  }
+
+  img1.addEventListener('load', onLoad);
+  img2.addEventListener('load', onLoad);
+  img3.addEventListener('load', onLoad);
+}
+
+function onFourfoldImageLoad(img1: HTMLImageElement,
+                             img2: HTMLImageElement,
+                             img3: HTMLImageElement,
+                             img4: HTMLImageElement,
+                             onLoadCallback: () => Promise<void>) {
+  let count = 0;
+  async function onLoad() {
+    count++;
+    if (count >= 4) {
+      await onLoadCallback();
+    }
+  }
+
+  img1.addEventListener('load', onLoad);
+  img2.addEventListener('load', onLoad);
+  img3.addEventListener('load', onLoad);
+  img4.addEventListener('load', onLoad);
+}
+
+function onImageLoad(img: HTMLImageElement, onLoadCallback: () => Promise<void>) {
+  img.addEventListener('load', onLoadCallback);
 }
 
 function append(parent: HTMLElement, child: Node) {
@@ -291,6 +404,7 @@ function append(parent: HTMLElement, child: Node) {
 }
 
 async function snapshot(target?: any, filename?: String, postfix?: boolean | string) {
+  window['__webf_sync_buffer__']();
   return new Promise<void>((resolve, reject) => {
     requestAnimationFrame(async () => {
       try {
@@ -386,6 +500,7 @@ Object.assign(global, {
   assert_not_equals,
   assert_throws_exactly,
   assert_class_string,
+  assert_approx_equals,
   simulatePointDown,
   simulatePointUp,
   simulatePointRemove,
@@ -396,4 +511,8 @@ Object.assign(global, {
   cacheSnapshot,
   matchCacheSnapshot,
   getSnapshot,
+  onTripleImageLoad,
+  onImageLoad,
+  onFourfoldImageLoad,
+  onDoubleImageLoad
 });
