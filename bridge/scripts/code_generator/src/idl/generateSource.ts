@@ -148,14 +148,18 @@ export function isTypeHaveNull(type: ParameterType): boolean {
   return type.value.some(t => t.value === FunctionArgumentType.null);
 }
 
-export function isTypeHaveString(types: ParameterType[]): boolean {
-  return types.some(t => {
-    if (t.isArray) return isTypeHaveString(t.value as ParameterType[]);
-    if (!Array.isArray(t.value)) {
-      return t.value === FunctionArgumentType.dom_string;
-    }
-    return t.value.some(t => t.value === FunctionArgumentType.dom_string);
-  });
+export function isTypeHaveString(types: ParameterType[] | ParameterType): boolean {
+  if (Array.isArray(types)) {
+    return types.some(t => {
+      if (t.isArray) return isTypeHaveString(t.value as ParameterType);
+      if (!Array.isArray(t.value)) {
+        return t.value === FunctionArgumentType.dom_string;
+      }
+      return t.value.some(t => t.value === FunctionArgumentType.dom_string);
+    });
+  }
+
+  return types.value === FunctionArgumentType.dom_string;
 }
 
 export function isPointerType(type: ParameterType): boolean {
@@ -312,7 +316,7 @@ function generateNativeValueTypeConverter(type: ParameterType): string {
 function generateRequiredInitBody(argument: FunctionArguments, argsIndex: number) {
   let type = generateIDLTypeConverter(argument.type, !argument.required);
 
-  let hasArgumentCheck = type.indexOf('Element') >= 0 || type.indexOf('Node') >= 0 || type === 'EventTarget' || type.indexOf('DOMMatrix') >= 0;
+  let hasArgumentCheck = type.indexOf('Element') >= 0 || type.indexOf('Node') >= 0 || type === 'EventTarget' || type.indexOf('DOMMatrix') >= 0 || type.indexOf('Path2D') >= 0;
 
   let body = '';
   if (argument.isDotDotDot) {
@@ -334,7 +338,7 @@ function generateCallMethodName(name: string) {
   return name;
 }
 
-function generateDartImplCallCode(blob: IDLBlob, declare: FunctionDeclaration, args: FunctionArguments[]): string {
+function generateDartImplCallCode(blob: IDLBlob, declare: FunctionDeclaration, isLayoutIndependent: boolean, args: FunctionArguments[]): string {
   let nativeArguments = args.map(i => {
     return `NativeValueConverter<${generateNativeValueTypeConverter(i.type)}>::ToNativeValue(${isDOMStringType(i.type) ? 'ctx, ' : ''}args_${i.name})`;
   });
@@ -350,19 +354,19 @@ auto* self = toScriptWrappable<${getClassName(blob)}>(JS_IsUndefined(this_val) ?
 ${nativeArguments.length > 0 ? `NativeValue arguments[] = {
   ${nativeArguments.join(',\n')}
 }` : 'NativeValue* arguments = nullptr;'};
-${returnValueAssignment}self->InvokeBindingMethod(binding_call_methods::k${declare.name}, ${nativeArguments.length}, arguments, exception_state);
+${returnValueAssignment}self->InvokeBindingMethod(binding_call_methods::k${declare.name}, ${nativeArguments.length}, arguments, FlushUICommandReason::kDependentsOnElement${isLayoutIndependent ? '| FlushUICommandReason::kDependentsOnLayout' : ''}, exception_state);
 ${returnValueAssignment.length > 0 ? `return Converter<${generateIDLTypeConverter(declare.returnType)}>::ToValue(NativeValueConverter<${generateNativeValueTypeConverter(declare.returnType)}>::FromNativeValue(native_value))` : ''};
   `.trim();
 }
 
-function generateOptionalInitBody(blob: IDLBlob, declare: FunctionDeclaration, argument: FunctionArguments, argsIndex: number, previousArguments: string[], options: GenFunctionBodyOptions) {
+function generateOptionalInitBody(blob: IDLBlob, declare: FunctionDeclaration, argument: FunctionArguments, argsIndex: number, argsLength: number, previousArguments: string[], options: GenFunctionBodyOptions) {
   let call = '';
   let returnValueAssignment = '';
   if (declare.returnType.value != FunctionArgumentType.void) {
     returnValueAssignment = 'return_value =';
   }
   if (declare.returnTypeMode?.dartImpl) {
-    call = generateDartImplCallCode(blob, declare, declare.args.slice(0, argsIndex + 1));
+    call = generateDartImplCallCode(blob, declare, declare.returnTypeMode?.layoutDependent ?? false, declare.args.slice(0, argsIndex + 1));
   } else if (options.isInstanceMethod) {
     call = `auto* self = toScriptWrappable<${getClassName(blob)}>(JS_IsUndefined(this_val) ? context->Global() : this_val);
 ${returnValueAssignment} self->${generateCallMethodName(declare.name)}(${[...previousArguments, `args_${argument.name}`, 'exception_state'].join(',')});`;
@@ -379,7 +383,9 @@ if (UNLIKELY(exception_state.HasException())) {
 if (argc <= ${argsIndex + 1}) {
   ${call}
   break;
-}`;
+}
+${(argsIndex) + 1 == argsLength ? call : ''}
+`;
 }
 
 function generateFunctionCallBody(blob: IDLBlob, declaration: FunctionDeclaration, options: GenFunctionBodyOptions = {
@@ -408,7 +414,7 @@ function generateFunctionCallBody(blob: IDLBlob, declaration: FunctionDeclaratio
   let totalArguments: string[] = requiredArguments.slice();
 
   for (let i = minimalRequiredArgc; i < declaration.args.length; i++) {
-    optionalArgumentsInit.push(generateOptionalInitBody(blob, declaration, declaration.args[i], i, totalArguments, options));
+    optionalArgumentsInit.push(generateOptionalInitBody(blob, declaration, declaration.args[i], i, declaration.args.length, totalArguments, options));
     totalArguments.push(`args_${declaration.args[i].name}`);
   }
 
@@ -420,7 +426,7 @@ function generateFunctionCallBody(blob: IDLBlob, declaration: FunctionDeclaratio
     returnValueAssignment = 'return_value =';
   }
   if (declaration.returnTypeMode?.dartImpl) {
-    call = generateDartImplCallCode(blob, declaration, declaration.args.slice(0, minimalRequiredArgc));
+    call = generateDartImplCallCode(blob, declaration, declaration.returnTypeMode?.layoutDependent ?? false, declaration.args.slice(0, minimalRequiredArgc));
   } else if (options.isInstanceMethod) {
     call = `auto* self = toScriptWrappable<${getClassName(blob)}>(JS_IsUndefined(this_val) ? context->Global() : this_val);
 ${returnValueAssignment} self->${generateCallMethodName(declaration.name)}(${minimalRequiredArgc > 0 ? `${requiredArguments.join(',')}` : 'exception_state'});`;
@@ -529,12 +535,18 @@ function generateFunctionBody(blob: IDLBlob, declare: FunctionDeclaration, optio
 
   ExceptionState exception_state;
   ExecutingContext* context = ExecutingContext::From(ctx);
-  MemberMutationScope scope{ExecutingContext::From(ctx)};
+  if (!context->IsContextValid()) return JS_NULL;
+
+  context->dartIsolateContext()->profiler()->StartTrackSteps("${getClassName(blob)}::${declare.name}");
+
+  MemberMutationScope scope{context};
   ${returnValueInit}
 
   do {  // Dummy loop for use of 'break'.
 ${addIndent(callBody, 4)}
   } while (false);
+
+   context->dartIsolateContext()->profiler()->FinishTrackSteps();
 
   if (UNLIKELY(exception_state.HasException())) {
     return exception_state.ToQuickJS();
@@ -577,11 +589,16 @@ export function generateCppSource(blob: IDLBlob, options: GenerateOptions) {
           }
         }
 
+        function addObjectStaticMethods(method: FunctionDeclaration, i: number) {
+          options.staticMethodsInstallList.push(`{"${method.name}", ${method.name}, ${method.args.length}}`);
+        }
+
         object.props.forEach(addObjectProps);
 
-        let overloadMethods = {};
+        let overloadMethods: {[key: string]: FunctionDeclaration[] } = {};
         let filtedMethods: FunctionDeclaration[] = [];
         object.methods.forEach(addObjectMethods);
+        object.staticMethods.forEach(addObjectStaticMethods);
 
         if (object.construct) {
           options.constructorInstallList.push(`{defined_properties::k${className}.Impl(), nullptr, nullptr, constructor}`)

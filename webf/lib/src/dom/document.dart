@@ -3,12 +3,14 @@
  * Copyright (C) 2022-present The WebF authors. All rights reserved.
  */
 import 'dart:collection';
+import 'dart:ffi';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
 import 'package:webf/css.dart';
 import 'package:webf/dom.dart';
 import 'package:webf/html.dart';
+import 'package:webf/widget.dart';
 import 'package:webf/foundation.dart';
 import 'package:webf/gesture.dart';
 import 'package:webf/launcher.dart';
@@ -23,60 +25,95 @@ import 'package:webf/src/foundation/cookie_jar.dart';
 /// This class will buffering all the renderObjects who's element are removed from the document tree, and they will be disposed
 /// in the end of this frame.
 class _InactiveRenderObjects {
-  final Set<RenderObject> _renderObjects = HashSet<RenderObject>();
+  Set<RenderObject> _renderObjects = {};
+  Set<RenderObject> _nextDisposeRenderObjects = {};
 
   bool _isScheduled = false;
+
+  void _scheduleFrameToFinalizeRenderObjects() {
+    _isScheduled = true;
+
+    /// We needs to wait at least 2 frames to dispose all webf managed renderObjects.
+    /// All renderObjects managed by WebF should be disposed after Flutter managed renderObjects dispose.
+    RendererBinding.instance.addPostFrameCallback((timeStamp) {
+      /// The Flutter framework will move all deactivated elements into _InactiveElement list.
+      /// They will be disposed in the next frame.
+      RendererBinding.instance.addPostFrameCallback((timeStamp) {
+        /// Now the renderObjects managed by Flutter framework are disposed, it's safe to dispose renderObject by our own.
+        finalizeInactiveRenderObjects();
+        _isScheduled = false;
+
+        /// Some pending Objects may be added during this 2 frame waiting. Regrouping them into the waiting list.
+        if (_nextDisposeRenderObjects.isNotEmpty) {
+          _renderObjects = _nextDisposeRenderObjects;
+          _nextDisposeRenderObjects = {};
+          _scheduleFrameToFinalizeRenderObjects();
+        }
+      });
+      RendererBinding.instance.scheduleFrame();
+    });
+    RendererBinding.instance.scheduleFrame();
+  }
 
   void add(RenderObject? renderObject) {
     if (renderObject == null) return;
 
     if (_renderObjects.isEmpty && !_isScheduled) {
-      _isScheduled = true;
-      /// We needs to wait at least 2 frames to dispose all webf managed renderObjects.
-      /// All renderObjects managed by WebF should be disposed after Flutter managed renderObjects dispose.
-      RendererBinding.instance.addPostFrameCallback((timeStamp) {
-        /// The Flutter framework will move all deactivated elements into _InactiveElement list.
-        /// They will be disposed in the next frame.
-        RendererBinding.instance.addPostFrameCallback((timeStamp) {
-          /// Now the renderObjects managed by Flutter framework are disposed, it's safe to dispose renderObject by our own.
-          finalizeInactiveRenderObjects();
-          _isScheduled = false;
-        });
-        RendererBinding.instance.scheduleFrame();
-      });
-      RendererBinding.instance.scheduleFrame();
+      _scheduleFrameToFinalizeRenderObjects();
     }
 
-    assert(!renderObject.debugDisposed!);
-    _renderObjects.add(renderObject);
+    assert(!renderObject.debugDisposed!, '$renderObject already disposed');
+
+    if (!_isScheduled) {
+      _renderObjects.add(renderObject);
+    } else {
+      _nextDisposeRenderObjects.add(renderObject);
+    }
   }
 
   void finalizeInactiveRenderObjects() {
     for(RenderObject object in _renderObjects) {
+      assert(!object.attached);
       object.dispose();
     }
     _renderObjects.clear();
   }
 }
+
 enum DocumentReadyState { loading, interactive, complete }
+
 enum VisibilityState { visible, hidden }
 
 class Document extends ContainerNode {
   final WebFController controller;
   final AnimationTimeline animationTimeline = AnimationTimeline();
-  RenderViewportBox? _viewport;
   GestureListener? gestureListener;
 
   Map<String, List<Element>> elementsByID = {};
   Map<String, List<Element>> elementsByName = {};
 
-  Set<Element> styleDirtyElements = {};
+  // Cache all the fixed children of renderBoxModel of root element.
+  Set<RenderBoxModel> fixedChildren = {};
+
+  final List<AsyncCallback> pendingPreloadingScriptCallbacks = [];
+
+  final Set<int> _styleDirtyElements = {};
+
+  void markElementStyleDirty(Element element) {
+    _styleDirtyElements.add(element.pointer!.address);
+  }
+  void clearElementStyleDirty(Element element) {
+    _styleDirtyElements.remove(element.pointer!.address);
+  }
 
   final NthIndexCache _nthIndexCache = NthIndexCache();
+
   NthIndexCache get nthIndexCache => _nthIndexCache;
 
   StyleNodeManager get styleNodeManager => _styleNodeManager;
   late StyleNodeManager _styleNodeManager;
+
+  Set<WidgetElement> aliveWidgetElements = {};
 
   late RuleSet ruleSet;
 
@@ -89,14 +126,8 @@ class Document extends ContainerNode {
   @override
   bool get isConnected => true;
 
-  Document(
-    BindingContext context, {
-    required this.controller,
-    required RenderViewportBox viewport,
-    this.gestureListener,
-    List<Cookie>? initialCookies
-  })  : _viewport = viewport,
-        super(NodeType.DOCUMENT_NODE, context) {
+  Document(BindingContext context, {required this.controller, this.gestureListener, List<Cookie>? initialCookies})
+      : super(NodeType.DOCUMENT_NODE, context) {
     cookie_ = CookieJar(controller.url, initialCookies: initialCookies);
     _styleNodeManager = StyleNodeManager(this);
     _scriptRunner = ScriptRunner(this, context.contextId);
@@ -105,6 +136,7 @@ class Document extends ContainerNode {
 
   // https://github.com/WebKit/WebKit/blob/main/Source/WebCore/dom/Document.h#L1898
   late ScriptRunner _scriptRunner;
+
   ScriptRunner get scriptRunner => _scriptRunner;
 
   _InactiveRenderObjects inactiveRenderObjects = _InactiveRenderObjects();
@@ -112,7 +144,7 @@ class Document extends ContainerNode {
   @override
   EventTarget? get parentEventTarget => defaultView;
 
-  RenderViewportBox? get viewport => _viewport;
+  RenderViewportBox? get viewport => controller.view.viewport;
 
   @override
   Document get ownerDocument => this;
@@ -120,6 +152,7 @@ class Document extends ContainerNode {
   Element? focusedElement;
 
   late CookieJar cookie_;
+
   CookieJar get cookie => cookie_;
 
   // Returns the Window object of the active document.
@@ -130,13 +163,15 @@ class Document extends ContainerNode {
   String get nodeName => '#document';
 
   @override
-  RenderBox? get renderer => _viewport;
+  RenderBox? get renderer => viewport;
 
   // https://github.com/WebKit/WebKit/blob/main/Source/WebCore/dom/Document.h#L770
   bool parsing = false;
 
   int _requestCount = 0;
+
   bool get hasPendingRequest => _requestCount > 0;
+
   void incrementRequestCount() {
     _requestCount++;
   }
@@ -149,7 +184,9 @@ class Document extends ContainerNode {
   // https://github.com/WebKit/WebKit/blob/main/Source/WebCore/dom/Document.h#L2091
   // Counters that currently need to delay load event, such as parsing a script.
   int _loadEventDelayCount = 0;
+
   bool get isDelayingLoadEvent => _loadEventDelayCount > 0;
+
   void incrementLoadEventDelayCount() {
     _loadEventDelayCount++;
   }
@@ -164,7 +201,9 @@ class Document extends ContainerNode {
   }
 
   int _domContentLoadedEventDelayCount = 0;
+
   bool get isDelayingDOMContentLoadedEvent => _domContentLoadedEventDelayCount > 0;
+
   void incrementDOMContentLoadedEventDelayCount() {
     _domContentLoadedEventDelayCount++;
   }
@@ -180,7 +219,8 @@ class Document extends ContainerNode {
 
   @override
   void initializeProperties(Map<String, BindingObjectProperty> properties) {
-    properties['cookie'] = BindingObjectProperty(getter: () => cookie.cookie(), setter: (value) => cookie.setCookieString(value));
+    properties['cookie'] =
+        BindingObjectProperty(getter: () => cookie.cookie(), setter: (value) => cookie.setCookieString(value));
     properties['compatMode'] = BindingObjectProperty(getter: () => compatMode);
     properties['domain'] = BindingObjectProperty(getter: () => domain, setter: (value) => domain = value);
     properties['readyState'] = BindingObjectProperty(getter: () => readyState);
@@ -203,7 +243,8 @@ class Document extends ContainerNode {
     methods['getElementsByClassName'] = BindingObjectMethodSync(call: (args) => getElementsByClassName(args));
     methods['getElementsByTagName'] = BindingObjectMethodSync(call: (args) => getElementsByTagName(args));
     methods['getElementsByName'] = BindingObjectMethodSync(call: (args) => getElementsByName(args));
-    methods['elementFromPoint'] = BindingObjectMethodSync(call: (args) => elementFromPoint(castToType<double>(args[0]), castToType<double>(args[1])));
+    methods['elementFromPoint'] = BindingObjectMethodSync(
+        call: (args) => elementFromPoint(castToType<double>(args[0]), castToType<double>(args[1])));
     if (kDebugMode || kProfileMode) {
       methods['___clear_cookies__'] = BindingObjectMethodSync(call: (args) => debugClearCookies(args));
     }
@@ -276,6 +317,7 @@ class Document extends ContainerNode {
     if (args[0].runtimeType == String && (args[0] as String).isEmpty) return null;
     return QuerySelector.querySelector(this, args.first);
   }
+
   dynamic elementFromPoint(double x, double y) {
     documentElement?.flushLayout();
     return HitTestPoint(x, y);
@@ -347,31 +389,46 @@ class Document extends ContainerNode {
   }
 
   Element? _documentElement;
+
   Element? get documentElement => _documentElement;
+
   set documentElement(Element? element) {
     if (_documentElement == element) {
       return;
     }
 
-    RenderViewportBox? viewport = _viewport;
+    bool documentElementChanged = element != null && element != _documentElement;
     // When document is disposed, viewport is null.
     if (viewport != null) {
       if (element != null) {
         element.attachTo(this);
-        // Should scrollable.
-        element.setRenderStyleProperty(OVERFLOW_X, CSSOverflowType.scroll);
-        element.setRenderStyleProperty(OVERFLOW_Y, CSSOverflowType.scroll);
-        // Init with viewport size.
-        element.renderStyle.width = CSSLengthValue(viewport.viewportSize.width, CSSLengthType.PX);
-        element.renderStyle.height = CSSLengthValue(viewport.viewportSize.height, CSSLengthType.PX);
         _visibilityState = VisibilityState.visible;
       } else {
         // Detach document element.
-        viewport.removeAll();
+        viewport!.removeAll();
       }
     }
 
     _documentElement = element;
+
+    if (viewport?.hasSize == true && documentElementChanged) {
+      initializeRootElementSize();
+    }
+  }
+
+  void initializeRootElementSize() {
+    assert(documentElement != null);
+    assert(viewport!.hasSize);
+    documentElement!.renderStyle.width = CSSLengthValue(viewport!.viewportSize.width, CSSLengthType.PX);
+    documentElement!.renderStyle.height = CSSLengthValue(viewport!.viewportSize.height, CSSLengthType.PX);
+    if (enableWebFProfileTracking) {
+      WebFProfiler.instance.startTrackUICommand();
+    }
+    documentElement!.setRenderStyleProperty(OVERFLOW_X, CSSOverflowType.scroll);
+    documentElement!.setRenderStyleProperty(OVERFLOW_Y, CSSOverflowType.scroll);
+    if (enableWebFProfileTracking) {
+      WebFProfiler.instance.finishTrackUICommand();
+    }
   }
 
   @override
@@ -382,6 +439,11 @@ class Document extends ContainerNode {
       throw UnsupportedError('Only Element can be appended to Document');
     }
     return super.appendChild(child);
+  }
+
+  @override
+  String toString() {
+    return 'Document($hashCode)';
   }
 
   @override
@@ -413,33 +475,34 @@ class Document extends ContainerNode {
     return super.replaceChild(newNode, oldNode);
   }
 
-  Element createElement(String type, [BindingContext? context]) {
+  Element createElement(String type, BindingContext context) {
     Element element = element_registry.createElement(type, context);
     return element;
   }
 
-  Element createElementNS(String uri, String type, [BindingContext? context]) {
+  Element createElementNS(String uri, String type, BindingContext context) {
     Element element = element_registry.createElementNS(uri, type, context);
     return element;
   }
 
-  TextNode createTextNode(String data, [BindingContext? context]) {
+  TextNode createTextNode(String data, BindingContext context) {
     TextNode textNode = TextNode(data, context);
     return textNode;
   }
 
-  DocumentFragment createDocumentFragment([BindingContext? context]) {
+  DocumentFragment createDocumentFragment(BindingContext context) {
     DocumentFragment documentFragment = DocumentFragment(context);
     return documentFragment;
   }
 
-  Comment createComment([BindingContext? context]) {
+  Comment createComment(BindingContext context) {
     Comment comment = Comment(context);
     return comment;
   }
 
   // TODO: https://wicg.github.io/construct-stylesheets/#using-constructed-stylesheets
   List<CSSStyleSheet> adoptedStyleSheets = [];
+
   // The styleSheets attribute is readonly attribute.
   final List<CSSStyleSheet> styleSheets = [];
 
@@ -453,6 +516,7 @@ class Document extends ContainerNode {
   }
 
   bool _recalculating = false;
+
   void updateStyleIfNeeded() {
     if (!styleNodeManager.hasPendingStyleSheet && !styleNodeManager.isStyleSheetCandidateNodeChanged) {
       return;
@@ -469,39 +533,59 @@ class Document extends ContainerNode {
   }
 
   void flushStyle({bool rebuild = false}) {
-    if (styleDirtyElements.isEmpty) {
+    if (enableWebFProfileTracking) {
+      WebFProfiler.instance.startTrackUICommandStep('Document.flushStyle');
+    }
+    if (_styleDirtyElements.isEmpty) {
       _recalculating = false;
+      if (enableWebFProfileTracking) {
+        WebFProfiler.instance.finishTrackUICommandStep();
+      }
       return;
     }
     if (!styleNodeManager.updateActiveStyleSheets(rebuild: rebuild)) {
       _recalculating = false;
-      styleDirtyElements.clear();
+      _styleDirtyElements.clear();
+      if (enableWebFProfileTracking) {
+        WebFProfiler.instance.finishTrackUICommandStep();
+      }
       return;
     }
-    if (styleDirtyElements.any((element) {
-          return element is HeadElement || element is HTMLElement;
+    if (_styleDirtyElements.any((address) {
+          BindingObject bindingObject = ownerView.getBindingObject(Pointer.fromAddress(address));
+          return bindingObject is HeadElement || bindingObject is HTMLElement;
         }) ||
         rebuild) {
       documentElement?.recalculateStyle(rebuildNested: true);
     } else {
-      for (Element element in styleDirtyElements) {
-        element.recalculateStyle();
+      for (int address in _styleDirtyElements) {
+        Element? element = ownerView.getBindingObject(Pointer.fromAddress(address)) as Element?;
+        element?.recalculateStyle();
       }
     }
-    styleDirtyElements.clear();
+    _styleDirtyElements.clear();
     _recalculating = false;
+    if (enableWebFProfileTracking) {
+      WebFProfiler.instance.finishTrackUICommandStep();
+    }
+  }
+
+  void reactiveWidgetElements() {
+    for (WidgetElement widgetElement in aliveWidgetElements) {
+      widgetElement.reactiveRenderer();
+    }
   }
 
   @override
   Future<void> dispose() async {
-    _viewport = null;
     gestureListener = null;
     styleSheets.clear();
     nthIndexCache.clearAll();
     adoptedStyleSheets.clear();
     cookie.clearCookie();
-    styleDirtyElements.clear();
+    _styleDirtyElements.clear();
+    fixedChildren.clear();
+    pendingPreloadingScriptCallbacks.clear();
     super.dispose();
   }
-
 }

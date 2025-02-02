@@ -27,27 +27,28 @@ enum ScriptReadyState { loading, interactive, complete }
 typedef ScriptExecution = Future<void> Function(bool async);
 
 class ScriptRunner {
-  ScriptRunner(Document document, int contextId)
+  ScriptRunner(Document document, double contextId)
       : _document = document,
         _contextId = contextId;
   final Document _document;
-  final int _contextId;
+  final double _contextId;
 
   final List<ScriptExecution> _syncScriptTasks = [];
+  final List<ScriptExecution> _preloadScriptTasks = [];
 
   // Indicate the sync pending scripts.
   int _resolvingCount = 0;
 
-  static Future<void> _evaluateScriptBundle(int contextId, WebFBundle bundle, {bool async = false}) async {
+  static Future<void> _evaluateScriptBundle(double contextId, WebFBundle bundle, {bool async = false, EvaluateOpItem? profileOp}) async {
     // Evaluate bundle.
     if (bundle.isJavascript) {
-      final String contentInString = await resolveStringFromData(bundle.data!, preferSync: !async);
-      bool result = await evaluateScripts(contextId, contentInString, url: bundle.url);
+      assert(isValidUTF8String(bundle.data!), 'The JavaScript codes should be in UTF-8 encoding format');
+      bool result = await evaluateScripts(contextId, bundle.data!, url: bundle.url, cacheKey: bundle.cacheKey, profileOp: profileOp);
       if (!result) {
         throw FlutterError('Script code are not valid to evaluate.');
       }
     } else if (bundle.isBytecode) {
-      bool result = evaluateQuickjsByteCode(contextId, bundle.data!);
+      bool result = await evaluateQuickjsByteCode(contextId, bundle.data!, profileOp: profileOp);
       if (!result) {
         throw FlutterError('Bytecode are not valid to execute.');
       }
@@ -65,12 +66,27 @@ class ScriptRunner {
     }
   }
 
+  bool hasPreloadScripts() {
+    return _preloadScriptTasks.isNotEmpty;
+  }
+
+  bool hasPendingScripts() {
+    return _syncScriptTasks.isNotEmpty;
+  }
+
   void _queueScriptForExecution(ScriptElement element, {bool isInline = false}) async {
     // Increment load event delay count before eval.
     _document.incrementDOMContentLoadedEventDelayCount();
 
+    // Increase the pending count for preloading resources.
+    if (_document.controller.preloadStatus != PreloadingStatus.none) {
+      _document.controller.unfinishedPreloadResources++;
+    }
+
     // Obtain bundle.
     WebFBundle bundle;
+    bool isInPreLoading = _document.controller.mode == WebFLoadingMode.preloading &&
+        _document.controller.preloadStatus != PreloadingStatus.done;
 
     if (isInline) {
       String? scriptCode = element.collectElementChildText();
@@ -80,7 +96,7 @@ class ScriptRunner {
       bundle = WebFBundle.fromContent(scriptCode);
     } else {
       String url = element.src.toString();
-      bundle = WebFBundle.fromUrl(url);
+      bundle = _document.controller.getPreloadBundleFromUrl(url) ?? WebFBundle.fromUrl(url);
     }
 
     element.readyState = ScriptReadyState.interactive;
@@ -89,8 +105,13 @@ class ScriptRunner {
       // If bundle is not resolved, should wait for it resolve to prevent the next script running.
       assert(bundle.isResolved, '${bundle.url} is not resolved');
 
+      EvaluateOpItem? evaluateOpItem;
+      if (enableWebFProfileTracking) {
+        evaluateOpItem = WebFProfiler.instance.startTrackEvaluate('ScriptRunner._evaluateScriptBundle');
+      }
+
       try {
-        await _evaluateScriptBundle(_contextId, bundle, async: async);
+        await _evaluateScriptBundle(_contextId, bundle, async: async, profileOp: evaluateOpItem);
       } catch (err, stack) {
         debugPrint('$err\n$stack');
         _document.decrementDOMContentLoadedEventDelayCount();
@@ -108,20 +129,34 @@ class ScriptRunner {
 
       // Decrement load event delay count after eval.
       _document.decrementDOMContentLoadedEventDelayCount();
+
+      if (enableWebFProfileTracking) {
+        WebFProfiler.instance.finishTrackEvaluate(evaluateOpItem!);
+      }
     }
 
     // @TODO: Differ async and defer.
     final bool shouldAsync = element.async || element.defer;
     if (!shouldAsync) {
-      _syncScriptTasks.add(task);
+      if (isInPreLoading) {
+        _preloadScriptTasks.add(task);
+      } else {
+        _syncScriptTasks.add(task);
+      }
+
       _resolvingCount++;
+    } else {
+      if (isInPreLoading) {
+        _preloadScriptTasks.add(task);
+      }
     }
 
     // Script loading phrase.
     // Increment count when request.
     _document.incrementDOMContentLoadedEventDelayCount();
     try {
-      await bundle.resolve(_contextId);
+      await bundle.resolve(baseUrl: _document.controller.url, uriParser: _document.controller.uriParser);
+      await bundle.obtainData(_contextId);
 
       if (!bundle.isResolved) {
         throw FlutterError('Network error.');
@@ -134,7 +169,9 @@ class ScriptRunner {
       });
       _document.decrementDOMContentLoadedEventDelayCount();
       // Cancel failed task.
-      _syncScriptTasks.remove(task);
+      if (!isInPreLoading) {
+        _syncScriptTasks.remove(task);
+      }
       return;
     } finally {
       // Decrease the resolving count.
@@ -146,19 +183,32 @@ class ScriptRunner {
       _document.decrementDOMContentLoadedEventDelayCount();
     }
 
-    // Script executing phrase.
-    if (shouldAsync) {
-      // @TODO: Use requestIdleCallback
-      SchedulerBinding.instance.scheduleFrameCallback((_) async {
-        await task(shouldAsync);
-      });
+    if (!isInPreLoading) {
+      // Script executing phrase.
+      if (shouldAsync) {
+        SchedulerBinding.instance.scheduleFrameCallback((_) async {
+          await task(shouldAsync);
+        });
+      } else {
+        scheduleMicrotask(() {
+          if (_resolvingCount == 0) {
+            _execute(_syncScriptTasks, async: false);
+          }
+        });
+      }
     } else {
-      scheduleMicrotask(() {
-        if (_resolvingCount == 0) {
-          _execute(_syncScriptTasks, async: false);
-        }
-      });
+      await bundle.preProcessing(_contextId);
+      _document.pendingPreloadingScriptCallbacks.add(() async => await task(shouldAsync));
+
+      if (_document.controller.preloadStatus != PreloadingStatus.none) {
+        _document.controller.unfinishedPreloadResources--;
+        _document.controller.checkPreloadCompleted();
+      }
     }
+  }
+
+  Future<void> executePreloadedBundles() async {
+    _execute(_preloadScriptTasks);
   }
 }
 
@@ -181,11 +231,15 @@ class ScriptElement extends Element {
     properties['src'] = BindingObjectProperty(getter: () => src, setter: (value) => src = castToType<String>(value));
     properties['async'] =
         BindingObjectProperty(getter: () => async, setter: (value) => async = castToType<bool>(value));
-    properties['defer'] = BindingObjectProperty(getter: () => defer, setter: (value) => defer = castToType<bool>(value));
-    properties['charset'] = BindingObjectProperty(getter: () => charset, setter: (value) => charset = castToType<String>(value));
+    properties['defer'] =
+        BindingObjectProperty(getter: () => defer, setter: (value) => defer = castToType<bool>(value));
+    properties['charset'] =
+        BindingObjectProperty(getter: () => charset, setter: (value) => charset = castToType<String>(value));
     properties['type'] = BindingObjectProperty(getter: () => type, setter: (value) => type = castToType<String>(value));
     properties['text'] = BindingObjectProperty(getter: () => text, setter: (value) => text = castToType<String>(value));
-    properties['readyState'] = BindingObjectProperty(getter: () => readyState.name,);
+    properties['readyState'] = BindingObjectProperty(
+      getter: () => readyState.name,
+    );
   }
 
   @override
@@ -260,7 +314,7 @@ class ScriptElement extends Element {
   }
 
   void _fetchAndExecuteSource() async {
-    int? contextId = ownerDocument.contextId;
+    double? contextId = ownerDocument.contextId;
     if (contextId == null) return;
     // Must
     if (src.isNotEmpty &&
@@ -282,7 +336,7 @@ class ScriptElement extends Element {
   @override
   void connectedCallback() async {
     super.connectedCallback();
-    int? contextId = ownerDocument.contextId;
+    double? contextId = ownerDocument.contextId;
     if (contextId == null) return;
     if (src.isNotEmpty) {
       _fetchAndExecuteSource();

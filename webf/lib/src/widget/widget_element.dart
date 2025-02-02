@@ -7,6 +7,7 @@ import 'package:flutter/widgets.dart';
 import 'package:webf/foundation.dart';
 import 'package:webf/css.dart';
 import 'package:webf/dom.dart' as dom;
+import 'package:webf/launcher.dart';
 import 'webf_adapter_widget.dart';
 import 'render_object_to_widget_adaptor.dart';
 
@@ -26,12 +27,13 @@ abstract class WidgetElement extends dom.Element {
   }
   WebFWidgetElementToWidgetAdapter? attachedAdapter;
 
+  bool isRouterLinkElement = false;
+
   BuildContext get context {
     return _state!.context;
   }
 
-  WidgetElement(
-    BindingContext? context) : super(context) {
+  WidgetElement(BindingContext? context) : super(context) {
     WidgetsFlutterBinding.ensureInitialized();
     _widget = WebFWidgetElementStatefulWidget(this);
   }
@@ -66,7 +68,7 @@ abstract class WidgetElement extends dom.Element {
   @override
   void didDetachRenderer() {
     super.didDetachRenderer();
-    _detachWidget();
+    detachWidget();
   }
 
   @nonVirtual
@@ -84,15 +86,42 @@ abstract class WidgetElement extends dom.Element {
   @override
   void willAttachRenderer() {
     super.willAttachRenderer();
-    if (renderStyle.display != CSSDisplay.none) {
+    if (renderStyle.display != CSSDisplay.none && attachedAdapter == null) {
       attachedAdapter = WebFWidgetElementToWidgetAdapter(child: widget, container: renderBoxModel!, widgetElement: this);
     }
   }
+
   @mustCallSuper
   @override
   void didAttachRenderer() {
     // Children of WidgetElement should insert render object by Flutter Framework.
-    _attachWidget(_widget);
+    attachWidget(_widget);
+  }
+
+  // Reconfigure renderObjects when already rendered pages reattached to flutter tree
+  void reactiveRenderer() {
+    // The older one was disposed by flutter, should replace it with a new one.
+    updateRenderBoxModel(forceUpdate: true);
+
+    if (renderStyle.display != CSSDisplay.none) {
+      // Generate a new adapter for this RenderWidget
+      attachedAdapter = WebFWidgetElementToWidgetAdapter(child: widget, container: renderBoxModel!, widgetElement: this);
+
+      // Reattach to Flutter
+      ownerDocument.controller.onCustomElementAttached!(attachedAdapter!);
+    }
+  }
+
+  @override
+  void connectedCallback() {
+    super.connectedCallback();
+    ownerDocument.aliveWidgetElements.add(this);
+  }
+
+  @override
+  void disconnectedCallback() {
+    super.disconnectedCallback();
+    ownerDocument.aliveWidgetElements.remove(this);
   }
 
   @override
@@ -179,7 +208,7 @@ abstract class WidgetElement extends dom.Element {
   static dom.Node? _getAncestorWidgetNode(WidgetElement element) {
     dom.Node? parent = element.parentNode;
 
-    while(parent != null) {
+    while (parent != null) {
       if (parent.flutterWidget != null) {
         return parent;
       }
@@ -190,18 +219,21 @@ abstract class WidgetElement extends dom.Element {
     return null;
   }
 
-  void _attachWidget(Widget widget) {
+  void attachWidget(Widget widget) {
     if (attachedAdapter == null) return;
 
     dom.Node? ancestorWidgetNode = _getAncestorWidgetNode(this);
     if (ancestorWidgetNode != null) {
       (ancestorWidgetNode as dom.Element).flutterWidgetState!.addWidgetChild(attachedAdapter!);
-    } else {
+    } else if (ownerDocument.controller.mode == WebFLoadingMode.standard ||
+        ownerDocument.controller.isPreLoadingOrPreRenderingComplete) {
       ownerDocument.controller.onCustomElementAttached!(attachedAdapter!);
+    } else {
+      ownerDocument.controller.pendingWidgetElements.add(attachedAdapter!);
     }
   }
 
-  void _detachWidget() {
+  void detachWidget() {
     if (attachedAdapter != null) {
       dom.Node? ancestorWidgetNode = _getAncestorWidgetNode(this);
       if (ancestorWidgetNode != null) {
@@ -211,5 +243,11 @@ abstract class WidgetElement extends dom.Element {
       }
       attachedAdapter = null;
     }
+  }
+
+  @override
+  void dispose() {
+    super.dispose();
+    ownerDocument.aliveWidgetElements.remove(this);
   }
 }

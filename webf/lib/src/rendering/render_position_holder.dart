@@ -36,7 +36,9 @@ class RenderPositionPlaceholder extends RenderPreferredSize {
     // The relative offset of positioned renderBox are depends on positionHolder' offset.
     // When the placeHolder got layout, should notify the positioned renderBox to layout again.
     SchedulerBinding.instance.scheduleFrameCallback((_) {
-      positioned?.markNeedsLayout();
+      if (positioned?.disposed == false) {
+        positioned?.markNeedsLayout();
+      }
     });
   }
 
@@ -48,8 +50,7 @@ class RenderPositionPlaceholder extends RenderPreferredSize {
   // Get the layout offset of renderObject to its ancestor which does not include the paint offset
   // such as scroll or transform.
   Offset getOffsetToAncestor(Offset point, RenderObject ancestor, {bool excludeScrollOffset = false}) {
-    return MatrixUtils.transformPoint(
-        getLayoutTransformTo(this, ancestor, excludeScrollOffset: excludeScrollOffset), point);
+    return getLayoutTransformTo(this, ancestor, excludeScrollOffset: excludeScrollOffset) + point;
   }
 }
 

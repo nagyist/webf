@@ -18,6 +18,12 @@ ScriptWrappable::ScriptWrappable(JSContext* ctx)
       context_(ExecutingContext::From(ctx)),
       context_id_(context_->contextId()) {}
 
+ScriptWrappable::~ScriptWrappable() {
+  if (status_block_ != nullptr) {
+    status_block_->disposed = true;
+  }
+}
+
 JSValue ScriptWrappable::ToQuickJS() const {
   return JS_DupValue(ctx_, jsObject_);
 }
@@ -28,6 +34,10 @@ JSValue ScriptWrappable::ToQuickJSUnsafe() const {
 
 ScriptValue ScriptWrappable::ToValue() {
   return ScriptValue(ctx_, jsObject_);
+}
+
+multi_threading::Dispatcher* ScriptWrappable::GetDispatcher() const {
+  return context_->dartIsolateContext()->dispatcher().get();
 }
 
 /// This callback will be called when QuickJS GC is running at marking stage.
@@ -238,6 +248,8 @@ void ScriptWrappable::InitializeQuickJSObject() {
               desc->value = return_value;
               desc->getter = JS_NULL;
               desc->setter = JS_NULL;
+            } else {
+              JS_FreeValue(ctx, return_value);
             }
             return true;
           }
@@ -252,6 +264,8 @@ void ScriptWrappable::InitializeQuickJSObject() {
               desc->value = return_value;
               desc->getter = JS_NULL;
               desc->setter = JS_NULL;
+            } else {
+              JS_FreeValue(ctx, return_value);
             }
             return true;
           }
@@ -287,21 +301,24 @@ void ScriptWrappable::InitializeQuickJSObject() {
   JS_SetPrototype(ctx_, jsObject_, prototype);
 }
 
-void ScriptWrappable::KeepAlive() {
-  if (is_alive)
-    return;
-
-  context_->RegisterActiveScriptWrappers(this);
-  JS_DupValue(ctx_, jsObject_);
-  is_alive = true;
+WebFValueStatus* ScriptWrappable::KeepAlive() {
+  if (alive_count == 0) {
+    context_->RegisterActiveScriptWrappers(this);
+    JS_DupValue(ctx_, jsObject_);
+    status_block_ = new WebFValueStatus();
+  }
+  alive_count++;
+  return status_block_;
 }
 
 void ScriptWrappable::ReleaseAlive() {
-  if (!is_alive)
-    return;
-  context_->InActiveScriptWrappers(this);
-  JS_FreeValue(ctx_, jsObject_);
-  is_alive = false;
+  alive_count--;
+  if (alive_count == 0) {
+    delete status_block_;
+    status_block_ = nullptr;
+    context_->InActiveScriptWrappers(this);
+    JS_FreeValue(ctx_, jsObject_);
+  }
 }
 
 }  // namespace webf

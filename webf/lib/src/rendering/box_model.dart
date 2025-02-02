@@ -6,7 +6,6 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui';
 
-import 'dart:developer' show Timeline;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
@@ -37,27 +36,41 @@ class RenderLayoutParentData extends ContainerBoxParentData<RenderBox> {
 //
 // ReturgetLayoutTransformTolocal layout coordinate system to the
 // coordinate system of `ancestor`.
-Matrix4 getLayoutTransformTo(RenderObject current, RenderObject ancestor, {bool excludeScrollOffset = false}) {
+Offset getLayoutTransformTo(RenderObject current, RenderObject ancestor, {bool excludeScrollOffset = false}) {
   final List<RenderObject> renderers = <RenderObject>[];
   for (RenderObject renderer = current; renderer != ancestor; renderer = renderer.parent!) {
     renderers.add(renderer);
     assert(renderer.parent != null);
   }
   renderers.add(ancestor);
-
+  List<Offset> stackOffsets = [];
   final Matrix4 transform = Matrix4.identity();
+
   for (int index = renderers.length - 1; index > 0; index -= 1) {
     RenderObject parentRenderer = renderers[index];
     RenderObject childRenderer = renderers[index - 1];
     // Apply the layout transform for renderBoxModel and fallback to paint transform for other renderObject type.
     if (parentRenderer is RenderBoxModel) {
+      // If the next renderBox has a fixed position,
+      // the outside scroll offset won't affect the actual results because of its fixed positioning.
+      if (childRenderer is RenderBoxModel && childRenderer.renderStyle.position == CSSPositionType.fixed) {
+        stackOffsets.clear();
+      }
+
+      stackOffsets.add(parentRenderer.obtainLayoutTransform(childRenderer, excludeScrollOffset));
+    } else if (parentRenderer is RenderSliverRepaintProxy) {
       parentRenderer.applyLayoutTransform(childRenderer, transform, excludeScrollOffset);
-    } else {
-      parentRenderer.applyPaintTransform(childRenderer, transform);
+    } else if (parentRenderer is RenderBox) {
+      assert(childRenderer.parent == parentRenderer);
+      if (childRenderer.parentData is BoxParentData) {
+        stackOffsets.add((childRenderer.parentData as BoxParentData).offset);
+      }
     }
   }
 
-  return transform;
+  if (stackOffsets.isEmpty) return Offset.zero;
+
+  return stackOffsets.reduce((prev, next) => prev + next);
 }
 
 /// Modified from Flutter rendering/box.dart.
@@ -217,6 +230,60 @@ class RenderLayoutBox extends RenderBoxModel
   void move(RenderBox child, {RenderBox? after}) {
     super.move(child, after: after);
     _paintingOrder = null;
+  }
+
+  @override
+  BoxConstraints getConstraints() {
+    if (enableWebFProfileTracking) {
+      WebFProfiler.instance.startTrackLayoutStep('RenderLayoutBox.getConstraints()');
+    }
+
+    BoxConstraints boxConstraints = super.getConstraints();
+    if (isScrollingContentBox) {
+      // fix overflow:scroll/auto nested overflow:scroll/auto
+      BoxConstraints parentConstraints = (parent as RenderBoxModel).constraints;
+      RenderStyle parentRenderStyle = (parent as RenderBoxModel).renderStyle;
+      CSSOverflowType effectiveOverflowY = parentRenderStyle.effectiveOverflowY;
+      CSSOverflowType effectiveOverflowX = parentRenderStyle.effectiveOverflowX;
+      // not processing effectiveOverflow=hidden/clip is to reduce the scope of influence
+      bool shouldInheritY = (effectiveOverflowY == CSSOverflowType.auto || effectiveOverflowY == CSSOverflowType.scroll) && scrollShouldInheritConstraints(this, false);
+      bool shouldInheritX = (effectiveOverflowX == CSSOverflowType.auto || effectiveOverflowX == CSSOverflowType.scroll) && scrollShouldInheritConstraints(this, true);
+      if (shouldInheritY || shouldInheritX) {
+        boxConstraints = BoxConstraints(
+          minWidth: boxConstraints.minWidth,
+          maxWidth: shouldInheritX ? parentConstraints.maxWidth : boxConstraints.maxWidth,
+          minHeight: boxConstraints.minHeight,
+          maxHeight: shouldInheritY ? parentConstraints.maxHeight : boxConstraints.maxHeight,
+        );
+      }
+    }
+
+    if (enableWebFProfileTracking) {
+      WebFProfiler.instance.finishTrackLayoutStep();
+    }
+
+    return boxConstraints;
+  }
+
+  bool scrollShouldInheritConstraints(RenderLayoutBox layoutBox, bool horizontal) {
+    RenderBox? childBox = layoutBox.firstChild;
+    while (childBox != null && childBox.parentData is RenderLayoutParentData) {
+      final RenderLayoutParentData childParentData = childBox.parentData as RenderLayoutParentData;
+      if (childBox is RenderLayoutBox) {
+        if (childBox.renderScrollingContent != null) {
+          return true;
+        }
+        CSSOverflowType childOverflow = horizontal ? childBox.renderStyle.overflowX : childBox.renderStyle.overflowY;
+        // this condition comes from h5 test
+        if (childOverflow == CSSOverflowType.hidden || childOverflow == CSSOverflowType.clip) {
+          if (scrollShouldInheritConstraints(childBox, horizontal)) {
+            return true;
+          }
+        }
+      }
+      childBox = childParentData.nextSibling;
+    }
+    return false;
   }
 
   // iterate add child to overflowLayout
@@ -519,6 +586,11 @@ class RenderLayoutBox extends RenderBoxModel
 
     Matrix4? transform = (childRenderStyle as CSSRenderStyle).transformMatrix;
     double maxScrollableX = childRenderStyle.left.computedValue + childScrollableSize!.width;
+
+    // maxScrollableX could be infinite due to the percentage value which depends on the parent box size,
+    // but in this stage, the parent's size will always to zero during the first initial layout.
+    if (maxScrollableX.isInfinite) return;
+
     if (transform != null) {
       maxScrollableX += transform.getTranslation()[0];
     }
@@ -538,6 +610,11 @@ class RenderLayoutBox extends RenderBoxModel
     }
 
     double maxScrollableY = childRenderStyle.top.computedValue + childScrollableSize.height;
+
+    // maxScrollableX could be infinite due to the percentage value which depends on the parent box size,
+    // but in this stage, the parent's size will always to zero during the first initial layout.
+    if (maxScrollableY.isInfinite) return;
+
     if (transform != null) {
       maxScrollableY += transform.getTranslation()[1];
     }
@@ -779,12 +856,11 @@ class RenderBoxModel extends RenderBox
     scrollOffsetX?.removeListener(scrollXListener);
     scrollOffsetY?.removeListener(scrollYListener);
 
+    RenderIntersectionObserverMixin.copyTo(this, copiedRenderBoxModel);
+
     return copiedRenderBoxModel
     // Copy render style
       ..renderStyle = renderStyle
-
-    // Copy box decoration
-      ..boxPainter = boxPainter
 
     // Copy overflow
       ..scrollListener = scrollListener
@@ -841,6 +917,9 @@ class RenderBoxModel extends RenderBox
   // Mirror debugDoingThisLayout flag in flutter.
   // [debugDoingThisLayout] indicate whether [performLayout] for this render object is currently running.
   bool doingThisLayout = false;
+
+  // A flag to detect the size of this renderBox had changed during this layout.
+  bool isSelfSizeChanged = false;
 
   // Mirror debugNeedsLayout flag in Flutter to use in layout performance optimization
   bool needsLayout = false;
@@ -921,6 +1000,10 @@ class RenderBoxModel extends RenderBox
   // Calculate constraints of renderBoxModel on layout stage and
   // only needed to be executed once on every layout.
   BoxConstraints getConstraints() {
+    if (enableWebFProfileTracking) {
+      WebFProfiler.instance.startTrackLayoutStep('RenderBoxModel.getConstraints');
+    }
+
     // Inner scrolling content box of overflow element inherits constraints from parent
     // but has indefinite max constraints to allow children overflow
     if (isScrollingContentBox) {
@@ -951,6 +1034,11 @@ class RenderBoxModel extends RenderBox
           maxHeight: double.infinity,
         );
       }
+
+      if (enableWebFProfileTracking) {
+        WebFProfiler.instance.finishTrackLayoutStep();
+      }
+
       return constraints;
     }
 
@@ -1039,6 +1127,11 @@ class RenderBoxModel extends RenderBox
       minHeight: minConstraintHeight,
       maxHeight: maxConstraintHeight,
     );
+
+    if (enableWebFProfileTracking) {
+      WebFProfiler.instance.finishTrackLayoutStep();
+    }
+
     return constraints;
   }
 
@@ -1061,6 +1154,12 @@ class RenderBoxModel extends RenderBox
   @override
   set size(Size value) {
     _boxSize = value;
+
+    Size? previousSize = hasSize ? super.size : null;
+    if (previousSize != null && previousSize != value) {
+      isSelfSizeChanged = true;
+    }
+
     super.size = value;
   }
 
@@ -1110,6 +1209,7 @@ class RenderBoxModel extends RenderBox
     contentConstraints = renderStyle.deflatePaddingConstraints(contentConstraints);
     _contentConstraints = contentConstraints;
     clearOverflowLayout();
+    isSelfSizeChanged = false;
   }
 
   /// Find scroll container
@@ -1145,6 +1245,17 @@ class RenderBoxModel extends RenderBox
       offset -= Offset(scrollLeft, scrollTop);
     }
     transform.translate(offset.dx, offset.dy);
+  }
+
+  Offset obtainLayoutTransform(RenderObject child, bool excludeScrollOffset) {
+    assert(child.parent == this);
+    assert(child.parentData is BoxParentData);
+    final BoxParentData childParentData = child.parentData! as BoxParentData;
+    Offset offset = childParentData.offset;
+    if (excludeScrollOffset) {
+      offset -= Offset(scrollLeft, scrollTop);
+    }
+    return offset;
   }
 
   // The max scrollable size.
@@ -1189,6 +1300,10 @@ class RenderBoxModel extends RenderBox
 
     needsLayout = false;
     dispatchResize(contentSize, boxSize ?? Size.zero);
+
+    if (isSelfSizeChanged) {
+      renderStyle.markTransformMatrixNeedsUpdate();
+    }
   }
 
   /// [RenderLayoutBox] real paint things after basiclly paint box model.
@@ -1202,24 +1317,21 @@ class RenderBoxModel extends RenderBox
 
   @override
   void paint(PaintingContext context, Offset offset) {
-    if (!kReleaseMode) {
-      Timeline.startSync(
-        'RenderBoxModel paint',
-        arguments: {'ownerElement': renderStyle.target.toString()},
-      );
+    if (enableWebFProfileTracking) {
+      WebFProfiler.instance.startTrackPaint(this);
     }
 
     if (!shouldPaint) {
-      if (!kReleaseMode) {
-        Timeline.finishSync();
+      if (enableWebFProfileTracking) {
+        WebFProfiler.instance.finishTrackPaint(this);
       }
       return;
     }
 
     paintBoxModel(context, offset);
 
-    if (!kReleaseMode) {
-      Timeline.finishSync();
+    if (enableWebFProfileTracking) {
+      WebFProfiler.instance.finishTrackPaint(this);
     }
   }
 
@@ -1339,9 +1451,7 @@ class RenderBoxModel extends RenderBox
     double ancestorBorderLeft = ancestor.renderStyle.borderLeftWidth?.computedValue ?? 0;
     Offset ancestorBorderWidth = Offset(ancestorBorderLeft, ancestorBorderTop);
 
-    return MatrixUtils.transformPoint(
-        getLayoutTransformTo(this, ancestor, excludeScrollOffset: excludeScrollOffset), point) -
-        ancestorBorderWidth;
+    return getLayoutTransformTo(this, ancestor, excludeScrollOffset: excludeScrollOffset) + point - ancestorBorderWidth;
   }
 
   bool _hasLocalBackgroundImage(CSSRenderStyle renderStyle) {
@@ -1445,10 +1555,13 @@ class RenderBoxModel extends RenderBox
     }
   }
 
+  bool _disposed = false;
+  bool get disposed => _disposed;
   /// Called when its corresponding element disposed
   @override
   @mustCallSuper
   void dispose() {
+    _disposed = true;
     super.dispose();
 
     // Dispose scroll behavior
@@ -1634,7 +1747,7 @@ class RenderBoxModel extends RenderBox
 
   // Detach renderBox from tree.
   static void detachRenderBox(RenderObject renderBox) {
-    if (renderBox.parent == null || !renderBox.attached) return;
+    if (renderBox.parent == null) return;
 
     // Remove reference from parent.
     RenderObject? parentRenderObject = renderBox.parent as RenderObject;

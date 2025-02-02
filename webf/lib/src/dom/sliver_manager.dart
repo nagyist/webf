@@ -62,7 +62,7 @@ class RenderSliverElementChildManager implements RenderSliverBoxChildManager {
       _sliverListLayout.insertSliverChild(child, after: after);
     }
 
-    if (childNode is Element) {
+    if (childNode is Element && !_target.ownerDocument.controller.shouldBlockingFlushingResolvedStyleProperties) {
       childNode.style.flushPendingProperties();
     }
 
@@ -141,6 +141,10 @@ class RenderSliverElementChildManager implements RenderSliverBoxChildManager {
     final int remainingCount = childCount - lastIndex - 1;
     return trailingScrollOffset + averageExtent * remainingCount;
   }
+
+  @override
+  // TODO: add impl for estimatedChildCount
+  int? get estimatedChildCount => null;
 }
 
 /// Used for the placeholder for empty sliver item.
@@ -162,5 +166,21 @@ class RenderSliverRepaintProxy extends RenderProxyBox {
         parentRenderObject.child = null;
       }
     }
+  }
+
+  void applyLayoutTransform(RenderObject child, Matrix4 transform, bool excludeScrollOffset) {
+    assert(child.parent == this);
+    assert(parentData is SliverMultiBoxAdaptorParentData);
+    assert(parent is WebFRenderSliverList);
+
+    SliverConstraints grandParentConstraints = (parent as WebFRenderSliverList).constraints;
+    Offset offset;
+    double? value = (parentData as SliverMultiBoxAdaptorParentData).layoutOffset;
+    if(grandParentConstraints.axisDirection == AxisDirection.right) {
+      offset = Offset(value ?? 0, 0);
+    } else {
+      offset = Offset(0, value ?? 0);
+    }
+    transform.translate(offset.dx, offset.dy);
   }
 }

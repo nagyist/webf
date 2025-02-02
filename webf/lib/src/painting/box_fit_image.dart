@@ -4,11 +4,15 @@
  */
 
 import 'dart:async';
+import 'dart:ffi';
 import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/painting.dart';
+import 'package:flutter/rendering.dart';
+import 'package:webf/dom.dart';
+import 'package:webf/bridge.dart';
 import 'package:webf/foundation.dart';
+import 'package:webf/launcher.dart';
 
 class BoxFitImageKey {
   const BoxFitImageKey({
@@ -21,7 +25,6 @@ class BoxFitImageKey {
 
   @override
   bool operator ==(Object other) {
-    if (other.runtimeType != runtimeType) return false;
     return other is BoxFitImageKey && other.url == url && other.configuration == configuration;
   }
 
@@ -32,21 +35,34 @@ class BoxFitImageKey {
   String toString() => 'BoxFitImageKey($url, $configuration)';
 }
 
-typedef LoadImage = Future<Uint8List> Function(Uri url);
-typedef OnImageLoad = void Function(int naturalWidth, int naturalHeight);
+class ImageLoadResponse {
+  final Uint8List bytes;
+  final String? mime;
+
+  ImageLoadResponse(this.bytes, {this.mime});
+}
+
+typedef LoadImage = Future<ImageLoadResponse> Function(Element ownerElement, Uri url);
+typedef OnImageLoad = void Function(Element ownerElement, int naturalWidth, int naturalHeight, int frameCount);
 
 class BoxFitImage extends ImageProvider<BoxFitImageKey> {
   BoxFitImage({
     required LoadImage loadImage,
     required this.url,
     required this.boxFit,
+    required this.devicePixelRatio,
+    required this.controller,
+    required this.targetElementPtr,
     this.onImageLoad,
-  }): _loadImage = loadImage;
+  }) : _loadImage = loadImage;
 
   final LoadImage _loadImage;
   final Uri url;
   final BoxFit boxFit;
   final OnImageLoad? onImageLoad;
+  final double devicePixelRatio;
+  final WebFController controller;
+  final Pointer<NativeBindingObject> targetElementPtr;
 
   @override
   Future<BoxFitImageKey> obtainKey(ImageConfiguration configuration) {
@@ -57,9 +73,9 @@ class BoxFitImage extends ImageProvider<BoxFitImageKey> {
   }
 
   Future<Codec> _loadAsync(BoxFitImageKey key) async {
-    Uint8List bytes;
+    ImageLoadResponse response;
     try {
-      bytes = await _loadImage(url);
+      response = await _loadImage(controller.view.getBindingObject<Element>(targetElementPtr)!, url);
     } on FlutterError {
       // Depending on where the exception was thrown, the image cache may not
       // have had a chance to track the key in the cache at all.
@@ -70,6 +86,7 @@ class BoxFitImage extends ImageProvider<BoxFitImageKey> {
       rethrow;
     }
 
+    final bytes = response.bytes;
     if (bytes.isEmpty) {
       PaintingBinding.instance.imageCache.evict(key);
       throw StateError('Unable to read data');
@@ -77,19 +94,28 @@ class BoxFitImage extends ImageProvider<BoxFitImageKey> {
 
     final ImmutableBuffer buffer = await ImmutableBuffer.fromUint8List(bytes);
     final ImageDescriptor descriptor = await ImageDescriptor.encoded(buffer);
+
+    int? preferredWidth;
+    int? preferredHeight;
+    if (key.configuration?.size != null) {
+      preferredWidth = (key.configuration!.size!.width * devicePixelRatio).toInt();
+      preferredHeight = (key.configuration!.size!.height * devicePixelRatio).toInt();
+    }
+
     final Codec codec = await _instantiateImageCodec(
       descriptor,
       boxFit: boxFit,
-      preferredWidth: key.configuration?.size?.width.toInt(),
-      preferredHeight: key.configuration?.size?.height.toInt(),
+      preferredWidth: preferredWidth,
+      preferredHeight: preferredHeight,
     );
 
     // Fire image on load after codec created.
     scheduleMicrotask(() {
       if (onImageLoad != null) {
-        onImageLoad!(descriptor.width, descriptor.height);
+        onImageLoad!(controller.view.getBindingObject<Element>(targetElementPtr)!, descriptor.width, descriptor.height,
+            codec.frameCount);
       }
-      _imageStreamCompleter!.setDimension(Dimension(descriptor.width, descriptor.height));
+      _imageStreamCompleter!.setDimension(Dimension(descriptor.width, descriptor.height, codec.frameCount));
     });
     return codec;
   }
@@ -131,7 +157,8 @@ class BoxFitImage extends ImageProvider<BoxFitImageKey> {
         completer is DimensionedMultiFrameImageStreamCompleter &&
         onImageLoad != null) {
       completer.dimension.then((Dimension dimension) {
-        onImageLoad!(dimension.width, dimension.height);
+        onImageLoad!(controller.view.getBindingObject<Element>(targetElementPtr)!, dimension.width, dimension.height,
+            dimension.frameCount);
       });
     }
     if (completer != null) {

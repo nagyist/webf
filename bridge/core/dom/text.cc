@@ -24,13 +24,18 @@ Node::NodeType Text::nodeType() const {
   return Node::kTextNode;
 }
 
+const TextNodePublicMethods* Text::textNodePublicMethods() {
+  static TextNodePublicMethods text_node_public_methods;
+  return &text_node_public_methods;
+}
+
 std::string Text::nodeName() const {
   return "#text";
 }
 
 Node* Text::Clone(Document& document, CloneChildrenFlag flag) const {
   Node* copy = Create(document, data());
-  GetExecutingContext()->uiCommandBuffer()->addCommand(UICommand::kCloneNode, nullptr, bindingObject(),
+  GetExecutingContext()->uiCommandBuffer()->AddCommand(UICommand::kCloneNode, nullptr, bindingObject(),
                                                        copy->bindingObject());
   return copy;
 }
