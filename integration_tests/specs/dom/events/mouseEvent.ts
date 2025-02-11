@@ -134,6 +134,46 @@ describe('MouseEvent', () => {
     await simulateClick(10.0, 10.0);
   });
 
+  it('should work with dblclick', async (done) => {
+    const div = document.createElement('div');
+    div.style.width = '100px';
+    div.style.height = '100px';
+    div.style.backgroundColor = 'red';
+    div.addEventListener('dblclick', (e) => {
+      done();
+    });
+    document.body.appendChild(div);
+    await simulateClick(10.0, 10.0, 0);
+    await sleep(0.1);
+    await simulateClick(10.0, 10.0, 1);
+  });
+
+  it('should work with both click and dblclick', async () => {
+    const div = document.createElement('div');
+    div.style.width = '100px';
+    div.style.height = '100px';
+    div.style.backgroundColor = 'red';
+    const events: string[] = [];
+
+    div.addEventListener('click', () => {
+      events.push('click');
+    }, false);
+
+    div.addEventListener('dblclick', () => {
+      events.push('dblclick');
+    }, false);
+
+    document.body.appendChild(div);
+
+    await simulateClick(10.0, 10.0, 0);
+    await sleep(0.1);
+    await simulateClick(10.0, 10.0, 1);
+
+    await sleep(0.1);
+    expect(events).toEqual(['click', 'click', 'dblclick']);
+    document.body.removeChild(div);
+  });
+
   it('should work width target', async (done) => {
     const div = document.createElement('div');
     div.style.backgroundColor = 'red';
@@ -232,21 +272,7 @@ describe('MouseEvent', () => {
     img2.click();
   })
 
-  it('should work with dblclick', async (done) => {
-    const div = document.createElement('div');
-    div.style.width = '100px';
-    div.style.height = '100px';
-    div.style.backgroundColor = 'red';
-    div.addEventListener('dblclick', (e) => {
-      done();
-    });
-    document.body.appendChild(div);
-    await simulateClick(10.0, 10.0, 0);
-    await sleep(0.1);
-    await simulateClick(10.0, 10.0, 1);
-  });
-
-  it('should work with fixed node which be scolled', async (done) => {
+  it('should work with fixed node which be scolled', async () => {
     const div = document.createElement('div')
     document.body.appendChild(div)
     div.style.width = '100%';
@@ -254,7 +280,6 @@ describe('MouseEvent', () => {
     div.style.backgroundColor = 'red';
 
     div.appendChild(document.createTextNode('aaa'));
-
 
     const mask = document.createElement('div');
     mask.style.width = '100%';
@@ -267,10 +292,12 @@ describe('MouseEvent', () => {
 
     window.scrollTo(0, '100vh');
 
+    let clicked = false;
     mask.addEventListener('click', function handleClick() {
       mask.removeEventListener('click', handleClick);
-      done();
-    })
+      clicked = true;
+    });
     await simulateClick(10.0, 10.0, 0);
+    expect(clicked).toBe(true);
   });
 });

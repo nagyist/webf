@@ -8,6 +8,7 @@
 #include "bindings/qjs/cppgc/local_handle.h"
 #include "container_node.h"
 #include "event_type_names.h"
+#include "plugin_api/document.h"
 #include "scripted_animation_controller.h"
 #include "tree_scope.h"
 
@@ -100,6 +101,13 @@ class Document : public ContainerNode, public TreeScope {
 
   ScriptValue location() const;
 
+  bool HasMutationObserversOfType(MutationType type) const { return mutation_observer_types_ & type; }
+  bool HasMutationObservers() const { return mutation_observer_types_; }
+  void AddMutationObserverTypes(MutationType types) { mutation_observer_types_ |= types; }
+
+  // nodeWillBeRemoved is only safe when removing one node at a time.
+  void NodeWillBeRemoved(Node&);
+
   void IncrementNodeCount() { node_count_++; }
   void DecrementNodeCount() {
     assert(node_count_ > 0);
@@ -119,15 +127,20 @@ class Document : public ContainerNode, public TreeScope {
   std::shared_ptr<EventListener> GetWindowAttributeEventListener(const AtomicString& event_type);
 
   void Trace(GCVisitor* visitor) const override;
+  const DocumentPublicMethods* documentPublicMethods();
 
  private:
   int node_count_{0};
   ScriptAnimationController script_animation_controller_;
+  MutationObserverOptions mutation_observer_types_;
 };
 
 template <>
 struct DowncastTraits<Document> {
   static bool AllowFrom(const Node& node) { return node.IsDocumentNode(); }
+  static bool AllowFrom(const EventTarget& event_target) {
+    return event_target.IsNode() && To<Node>(event_target).IsDocumentNode();
+  }
 };
 
 }  // namespace webf

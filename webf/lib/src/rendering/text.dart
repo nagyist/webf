@@ -6,6 +6,7 @@
 import 'package:flutter/rendering.dart';
 import 'package:webf/css.dart';
 import 'package:webf/dom.dart';
+import 'package:webf/foundation.dart';
 import 'package:webf/rendering.dart';
 
 // White space processing in CSS affects only the document white space characters:
@@ -50,62 +51,71 @@ class RenderTextBox extends RenderBox with RenderObjectWithChildMixin<RenderBox>
   }
 
   String get _trimmedData {
-    if (parentData is RenderLayoutParentData) {
-      /// https://drafts.csswg.org/css-text-3/#propdef-white-space
-      /// The following table summarizes the behavior of the various white-space values:
-      //
-      //       New lines / Spaces and tabs / Text wrapping / End-of-line spaces
-      // normal    Collapse  Collapse  Wrap     Remove
-      // nowrap    Collapse  Collapse  No wrap  Remove
-      // pre       Preserve  Preserve  No wrap  Preserve
-      // pre-wrap  Preserve  Preserve  Wrap     Hang
-      // pre-line  Preserve  Collapse  Wrap     Remove
-      // break-spaces  Preserve  Preserve  Wrap  Wrap
-      CSSRenderStyle parentRenderStyle = (parent as RenderBoxModel).renderStyle;
-      WhiteSpace whiteSpace = parentRenderStyle.whiteSpace;
-      if (whiteSpace == WhiteSpace.pre ||
-          whiteSpace == WhiteSpace.preLine ||
-          whiteSpace == WhiteSpace.preWrap ||
-          whiteSpace == WhiteSpace.breakSpaces) {
-        return whiteSpace == WhiteSpace.preLine ? _collapseWhitespace(_data) : _data;
-      } else {
-        String collapsedData = _collapseWhitespace(_data);
-        // TODO:
-        // Remove the leading space while prev element have space too:
-        //   <p><span>foo </span> bar</p>
-        // Refs:
-        //   https://github.com/WebKit/WebKit/blob/6a970b217d59f36e64606ed03f5238d572c23c48/Source/WebCore/layout/inlineformatting/InlineLineBuilder.cpp#L295
-        RenderObject? previousSibling = (parentData as RenderLayoutParentData).previousSibling;
+    /// https://drafts.csswg.org/css-text-3/#propdef-white-space
+    /// The following table summarizes the behavior of the various white-space values:
+    //
+    //       New lines / Spaces and tabs / Text wrapping / End-of-line spaces
+    // normal    Collapse  Collapse  Wrap     Remove
+    // nowrap    Collapse  Collapse  No wrap  Remove
+    // pre       Preserve  Preserve  No wrap  Preserve
+    // pre-wrap  Preserve  Preserve  Wrap     Hang
+    // pre-line  Preserve  Collapse  Wrap     Remove
+    // break-spaces  Preserve  Preserve  Wrap  Wrap
+    CSSRenderStyle? parentRenderStyle;
 
-        if (previousSibling == null) {
-          collapsedData = _trimLeftWhitespace(collapsedData);
-        } else if (previousSibling is RenderBoxModel &&
-            (previousSibling.renderStyle.display == CSSDisplay.block ||
-                previousSibling.renderStyle.display == CSSDisplay.flex)) {
-          // If previousSibling is block,should trimLeft slef.
-          CSSDisplay? display = previousSibling.renderStyle.display;
-          if (display == CSSDisplay.block || display == CSSDisplay.sliver || display == CSSDisplay.flex) {
-            collapsedData = _trimLeftWhitespace(collapsedData);
-          }
-        } else if (previousSibling is RenderTextBox && isEndWithSpace(previousSibling.data)) {
-          collapsedData = _trimLeftWhitespace(collapsedData);
-        }
+    if (parent is RenderBoxModel){
+      parentRenderStyle = (parent as RenderBoxModel).renderStyle;
+    }
 
-        RenderObject? nextSibling = (parentData as RenderLayoutParentData).nextSibling;
-        if (nextSibling == null) {
-          collapsedData = _trimRightWhitespace(collapsedData);
-        } else if (nextSibling is RenderBoxModel &&
-            (nextSibling.renderStyle.display == CSSDisplay.block ||
-                nextSibling.renderStyle.display == CSSDisplay.flex)) {
-          // If nextSibling is block,should trimRight slef.
-          CSSDisplay? display = nextSibling.renderStyle.display;
-          if (display == CSSDisplay.block || display == CSSDisplay.sliver || display == CSSDisplay.flex) {
-            collapsedData = _trimRightWhitespace(collapsedData);
-          }
-        }
-
-        return collapsedData;
+    WhiteSpace whiteSpace = parentRenderStyle?.whiteSpace ?? WhiteSpace.normal;
+    if (whiteSpace == WhiteSpace.pre ||
+        whiteSpace == WhiteSpace.preLine ||
+        whiteSpace == WhiteSpace.preWrap ||
+        whiteSpace == WhiteSpace.breakSpaces) {
+      return whiteSpace == WhiteSpace.preLine ? _collapseWhitespace(_data) : _data;
+    } else {
+      String collapsedData = _collapseWhitespace(_data);
+      // Remove the leading space while prev element have space too:
+      //   <p><span>foo </span> bar</p>
+      // Refs:
+      //   https://github.com/WebKit/WebKit/blob/6a970b217d59f36e64606ed03f5238d572c23c48/Source/WebCore/layout/inlineformatting/InlineLineBuilder.cpp#L295
+      RenderObject? previousSibling;
+      if (parent is RenderLayoutBox) {
+        previousSibling = (parentData as RenderLayoutParentData).previousSibling;
       }
+
+      if (previousSibling == null) {
+        collapsedData = _trimLeftWhitespace(collapsedData);
+      } else if (previousSibling is RenderBoxModel &&
+          (previousSibling.renderStyle.display == CSSDisplay.block ||
+              previousSibling.renderStyle.display == CSSDisplay.flex)) {
+        // If previousSibling is block,should trimLeft slef.
+        CSSDisplay? display = previousSibling.renderStyle.display;
+        if (display == CSSDisplay.block || display == CSSDisplay.sliver || display == CSSDisplay.flex) {
+          collapsedData = _trimLeftWhitespace(collapsedData);
+        }
+      } else if (previousSibling is RenderTextBox && isEndWithSpace(previousSibling.data)) {
+        collapsedData = _trimLeftWhitespace(collapsedData);
+      }
+
+      RenderObject? nextSibling;
+      if (parent is RenderLayoutBox) {
+        nextSibling = (parentData as RenderLayoutParentData).nextSibling;
+      }
+
+      if (nextSibling == null) {
+        collapsedData = _trimRightWhitespace(collapsedData);
+      } else if (nextSibling is RenderBoxModel &&
+          (nextSibling.renderStyle.display == CSSDisplay.block ||
+              nextSibling.renderStyle.display == CSSDisplay.flex)) {
+        // If nextSibling is block,should trimRight slef.
+        CSSDisplay? display = nextSibling.renderStyle.display;
+        if (display == CSSDisplay.block || display == CSSDisplay.sliver || display == CSSDisplay.flex) {
+          collapsedData = _trimRightWhitespace(collapsedData);
+        }
+      }
+
+      return collapsedData;
     }
 
     return _data;
@@ -139,9 +149,7 @@ class RenderTextBox extends RenderBox with RenderObjectWithChildMixin<RenderBox>
 
   @override
   void setupParentData(RenderBox child) {
-    if (child.parentData is! TextParentData) {
-      child.parentData = TextParentData();
-    }
+    child.parentData = TextParentData();
   }
 
   int? get _maxLines {
@@ -198,7 +206,14 @@ class RenderTextBox extends RenderBox with RenderObjectWithChildMixin<RenderBox>
   }
 
   BoxConstraints getConstraints() {
+    if (enableWebFProfileTracking) {
+      WebFProfiler.instance.startTrackLayoutStep('RenderTextBox.getConstraints()');
+    }
+
     if (renderStyle.whiteSpace == WhiteSpace.nowrap && renderStyle.effectiveTextOverflow != TextOverflow.ellipsis) {
+      if (enableWebFProfileTracking) {
+        WebFProfiler.instance.finishTrackLayoutStep();
+      }
       return BoxConstraints();
     }
 
@@ -233,6 +248,10 @@ class RenderTextBox extends RenderBox with RenderObjectWithChildMixin<RenderBox>
 
         maxConstraintWidth = parentConstraints.maxWidth - horizontalPaddingLength - horizontalBorderLength;
       }
+    }
+
+    if (enableWebFProfileTracking) {
+      WebFProfiler.instance.finishTrackLayoutStep();
     }
 
     // Text will not overflow from container, so it can inherit

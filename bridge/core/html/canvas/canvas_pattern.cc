@@ -4,6 +4,7 @@
 
 #include "canvas_pattern.h"
 #include "binding_call_methods.h"
+#include "core/executing_context.h"
 #include "foundation/native_value_converter.h"
 
 namespace webf {
@@ -13,7 +14,8 @@ CanvasPattern::CanvasPattern(ExecutingContext* context, NativeBindingObject* nat
 
 void CanvasPattern::setTransform(DOMMatrix* dom_matrix, ExceptionState& exception_state) {
   NativeValue arguments[] = {NativeValueConverter<NativeTypePointer<DOMMatrix>>::ToNativeValue(dom_matrix)};
-  InvokeBindingMethod(binding_call_methods::ksetTransform, 1, arguments, exception_state);
+  InvokeBindingMethod(binding_call_methods::ksetTransform, 1, arguments, FlushUICommandReason::kDependentsOnElement,
+                      exception_state);
 }
 
 NativeValue CanvasPattern::HandleCallFromDartSide(const AtomicString& method,

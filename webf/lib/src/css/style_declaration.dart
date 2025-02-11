@@ -47,7 +47,9 @@ List<String> _propertyOrders = [
   TRANSITION_TIMING_FUNCTION,
   TRANSITION_DELAY,
   OVERFLOW_X,
-  OVERFLOW_Y
+  OVERFLOW_Y,
+  WIDTH,
+  HEIGHT
 ];
 
 RegExp _kebabCaseReg = RegExp(r'[A-Z]');
@@ -75,7 +77,7 @@ class CSSPropertyValue {
 ///    object on the first CSS rule in the document's first stylesheet.
 /// 3. Via [Window.getComputedStyle()], which exposes the [CSSStyleDeclaration]
 ///    object as a read-only interface.
-class CSSStyleDeclaration extends BindingObject {
+class CSSStyleDeclaration extends DynamicBindingObject {
   Element? target;
 
   // TODO(yuanyan): defaultStyle should be longhand properties.
@@ -454,9 +456,6 @@ class CSSStyleDeclaration extends BindingObject {
       _pendingProperties.remove(DISPLAY);
       _emitPropertyChanged(DISPLAY, prevValue?.value, currentValue.value, baseHref: currentValue.baseHref);
     }
-
-    // If target has no renderer attached, no need to flush.
-    if (!_target.isRendererAttached) return;
 
     RenderBoxModel? renderBoxModel = _target.renderBoxModel;
     if (_pendingProperties.isEmpty || renderBoxModel == null) {

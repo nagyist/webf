@@ -223,6 +223,8 @@
     "webglcontextrestored",
     "wheel",
     "zoom",
-    "intersectionchange"
+    "intersectionchange",
+    "gcopen",
+    "hybridrouterchange"
   ]
 }

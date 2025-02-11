@@ -3,30 +3,47 @@
  * Copyright (C) 2022-present The WebF authors. All rights reserved.
  */
 
+import 'dart:async';
 import 'dart:ffi';
 import 'package:webf/launcher.dart';
 
+import 'dynamic_library.dart';
 import 'binding.dart';
 import 'from_native.dart';
 import 'to_native.dart';
+import 'multiple_thread.dart';
 
-class DartContext {
+typedef NativeOnDartContextFinalized = Void Function(Pointer<Void> data);
+typedef DartOnDartContextFinalized = void Function(Pointer<Void> data);
+
+final _initDartDynamicLinking = WebFDynamicLibrary.ref
+    .lookup<NativeFunction<NativeOnDartContextFinalized>>('on_dart_context_finalized');
+
+class DartContext implements Finalizable {
+  static final _finalizer = NativeFinalizer(_initDartDynamicLinking);
+
   DartContext() : pointer = initDartIsolateContext(makeDartMethodsData()) {
     initDartDynamicLinking();
-    registerDartContextFinalizer(this);
+    _finalizer.attach(this, pointer);
   }
   final Pointer<Void> pointer;
 }
 
-DartContext dartContext = DartContext();
+DartContext? dartContext;
+
+bool isJSRunningInDedicatedThread(double contextId) {
+  return contextId >= 0;
+}
 
 /// Init bridge
-int initBridge(WebFViewController view) {
+FutureOr<double> initBridge(WebFViewController view, WebFThread runningThread) async {
   // Setup binding bridge.
   BindingBridge.setup();
 
-  int pageId = newPageId();
-  allocateNewPage(pageId);
+  dartContext ??= DartContext();
 
-  return pageId;
+  double newContextId = runningThread.identity();
+  await allocateNewPage(runningThread is FlutterUIThread, newContextId, runningThread.syncBufferSize());
+
+  return newContextId;
 }

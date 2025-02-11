@@ -19,7 +19,10 @@ class Window extends EventTarget {
 
   Window(BindingContext? context, this.document)
       : screen = Screen(context!.contextId, document.controller.ownerFlutterView, document.controller.view),
-        super(context);
+        super(context) {
+    BindingBridge.listenEvent(this, 'load');
+    BindingBridge.listenEvent(this, 'gcopen');
+  }
 
   @override
   EventTarget? get parentEventTarget => null;
@@ -74,6 +77,22 @@ class Window extends EventTarget {
       ..scrollBy(x, y, withAnimation);
   }
 
+  final Set<Element> _watchedViewportElements = {};
+
+  void watchViewportSizeChangeForElement(Element element) {
+    _watchedViewportElements.add(element);
+  }
+
+  void unwatchViewportSizeChangeForElement(Element element) {
+    _watchedViewportElements.remove(element);
+  }
+
+  void resizeViewportRelatedElements() {
+    _watchedViewportElements.forEach((element) {
+      element.renderer?.markNeedsLayout();
+    });
+  }
+
   String get colorScheme => document.controller.ownerFlutterView.platformDispatcher.platformBrightness == Brightness.light ? 'light' : 'dark';
 
   double get devicePixelRatio => document.controller.ownerFlutterView.devicePixelRatio;
@@ -96,18 +115,18 @@ class Window extends EventTarget {
   }
 
   @override
-  void dispatchEvent(Event event) {
+  Future<void> dispatchEvent(Event event) async {
     // Events such as EVENT_DOM_CONTENT_LOADED need to ensure that listeners are flushed and registered.
     if (contextId != null && event.type == EVENT_DOM_CONTENT_LOADED ||
         event.type == EVENT_LOAD ||
         event.type == EVENT_ERROR) {
-      flushUICommandWithContextId(contextId!);
+      flushUICommandWithContextId(contextId!, pointer!);
     }
-    super.dispatchEvent(event);
+    return super.dispatchEvent(event);
   }
 
   @override
-  void addEventListener(String eventType, EventHandler handler, {EventListenerOptions? addEventListenerOptions}) {
+  void addEventListener(String eventType, EventHandler handler, {EventListenerOptions? addEventListenerOptions, bool builtInCallback = false}) {
     super.addEventListener(eventType, handler, addEventListenerOptions: addEventListenerOptions);
     switch (eventType) {
       case EVENT_SCROLL:
@@ -118,7 +137,13 @@ class Window extends EventTarget {
   }
 
   @override
-  void removeEventListener(String eventType, EventHandler handler, {bool isCapture = false}) {
+  void dispose() {
+    super.dispose();
+    _watchedViewportElements.clear();
+  }
+
+  @override
+  void removeEventListener(String eventType, EventHandler handler, {bool isCapture = false, bool builtInCallback = false}) {
     super.removeEventListener(eventType, handler, isCapture: isCapture);
     switch (eventType) {
       case EVENT_SCROLL:

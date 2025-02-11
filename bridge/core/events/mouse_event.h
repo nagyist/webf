@@ -5,6 +5,7 @@
 #ifndef WEBF_CORE_EVENTS_MOUSE_EVENT_H_
 #define WEBF_CORE_EVENTS_MOUSE_EVENT_H_
 
+#include "plugin_api/mouse_event.h"
 #include "qjs_mouse_event_init.h"
 #include "ui_event.h"
 
@@ -56,12 +57,14 @@ class MouseEvent : public UIEvent {
 
   void Trace(GCVisitor* visitor) const override;
 
+  const MouseEventPublicMethods* mouseEventPublicMethods();
+
   bool IsMouseEvent() const override;
 
  private:
   bool alt_key_;
-  double button_;
-  double buttons_;
+  double button_{0};
+  double buttons_{0};
   double client_x_;
   double client_y_;
   bool ctrl_key_;
@@ -78,6 +81,11 @@ class MouseEvent : public UIEvent {
   double x_;
   double y_;
   Member<EventTarget> related_target_;
+};
+
+template <>
+struct DowncastTraits<MouseEvent> {
+  static bool AllowFrom(const Event& event) { return event.IsMouseEvent(); }
 };
 
 }  // namespace webf

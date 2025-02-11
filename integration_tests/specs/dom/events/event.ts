@@ -426,7 +426,7 @@ describe('Event', () => {
     expect(e.type).toBe(type);
   });
 
-  it('Event Level 0 removal', () => {
+  it('Event Level 0 removal', async () => {
     var el = createElement('div', {
       style: {
         width: '100px',
@@ -443,17 +443,20 @@ describe('Event', () => {
     }
     el.onclick = fn1;
     el.click();
+    await sleep(0.1);
 
     el.onclick = null;
     el.click();
+    await sleep(0.1);
 
     el.onclick = fn2;
     el.click();
+    await sleep(0.1);
 
     expect(ret).toEqual('12');
   });
 
-  it('Event Level 2 listen multi-times', () => {
+  it('Event Level 2 listen multi-times', async () => {
     var el = createElement('div', {
       style: {
         width: '100px',
@@ -473,10 +476,12 @@ describe('Event', () => {
     el.addEventListener('click', fn2);
     el.click();
 
+    await sleep(0.1);
+
     expect(ret).toEqual('12');
   });
 
-  it('Event Level 2 listen multi-times with removal', () => {
+  it('Event Level 2 listen multi-times with removal', async () => {
     var el = createElement('div', {
       style: {
         width: '100px',
@@ -499,10 +504,12 @@ describe('Event', () => {
     el.removeEventListener('click', fn2);
     el.click();
 
+    await sleep(0.1);
+
     expect(ret).toEqual('');
   });
 
-  it('Add multi event types', () => {
+  it('Add multi event types', async () => {
       var el = createElement('div', {
         style: {
           width: '100px',
@@ -519,9 +526,10 @@ describe('Event', () => {
 
       el.click();
 
+      await sleep(0.1);
       expect(ret).toEqual('1');
     });
-  it('should work with undefined addEventListener options', () => {
+  it('should work with undefined addEventListener options', async () => {
     var el = createElement('div', {
       style: {
         width: '100px',
@@ -537,6 +545,7 @@ describe('Event', () => {
     el.addEventListener('scroll', fn1, undefined);
 
     el.click();
+    await sleep(0.1);
 
     expect(ret).toEqual('1');
   });
@@ -776,5 +785,43 @@ describe('Event', () => {
     observer.observe(el2);
     el.style.width = '102px';
     el2.style.width = '102px';
+  });
+
+  it('should works with preventDefault in `<a /> element', async (done) => {
+    const anchorElement = createElement('a', {}, [createText('')]);
+    BODY.append(anchorElement);
+
+    anchorElement.addEventListener('click', async (e) => {
+      e.preventDefault();
+
+      BODY.append(createText('Nothing happened'));
+
+      await snapshot();
+      done();
+    });
+
+    anchorElement.click();
+  });
+
+  it('should satisfy react-router event check', (done) => {
+    function isModifiedEvent(event: MouseEvent) {
+      return !!(event.metaKey || event.altKey || event.ctrlKey || event.shiftKey);
+    }
+    function shouldProcessLinkClick(event: MouseEvent) {
+      return event.button === 0 &&
+        // Let browser handle "target=_blank" etc.
+        !isModifiedEvent(event) // Ignore clicks with modifier keys
+        ;
+    }
+
+    const anchorElement = createElement('a', {}, []);
+    BODY.append(anchorElement);
+
+    anchorElement.addEventListener('click', async (e) => {
+      expect(shouldProcessLinkClick(e));
+      done();
+    });
+
+    anchorElement.click();
   });
 });

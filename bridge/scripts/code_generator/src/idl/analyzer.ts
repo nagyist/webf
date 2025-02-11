@@ -24,11 +24,22 @@ export interface UnionTypeCollector {
 }
 
 export function analyzer(blob: IDLBlob, definedPropertyCollector: DefinedPropertyCollector, unionTypeCollector: UnionTypeCollector) {
-  let code = blob.raw;
   const sourceFile = ts.createSourceFile(blob.source, blob.raw, ScriptTarget.ES2020);
   blob.objects = sourceFile.statements.map(statement => walkProgram(blob, statement, definedPropertyCollector, unionTypeCollector)).filter(o => {
     return o instanceof ClassObject || o instanceof FunctionObject;
   }) as (FunctionObject | ClassObject)[];
+}
+
+export function buildClassRelationship() {
+  const globalClassMap = ClassObject.globalClassMap;
+  const globalClassRelationMap = ClassObject.globalClassRelationMap;
+
+  Object.values(globalClassMap).forEach(obj => {
+    if (obj.parent) {
+      globalClassRelationMap[obj.parent] = globalClassRelationMap[obj.parent] || [];
+      globalClassRelationMap[obj.parent].push(obj.name);
+    }
+  });
 }
 
 function getInterfaceName(statement: ts.Statement) {
@@ -127,11 +138,30 @@ function getParameterBaseType(type: ts.TypeNode, mode?: ParameterMode): Paramete
       return argument.typeName.text;
     } else if (identifier === 'DartImpl') {
       if (mode) mode.dartImpl = true;
-      let argument = typeReference.typeArguments![0];
+      let argument: ts.TypeNode = typeReference.typeArguments![0] as unknown as ts.TypeNode;
+
+      if (argument.kind == ts.SyntaxKind.TypeReference) {
+        let typeReference: ts.TypeReference = argument as unknown as ts.TypeReference;
+        // @ts-ignore
+        let identifier = (typeReference.typeName as ts.Identifier).text;
+
+        if (identifier == 'DependentsOnLayout') {
+          if (mode) {
+            mode.layoutDependent = true;
+          }
+          argument = typeReference.typeArguments![0] as unknown as ts.TypeNode;
+        }
+      }
+
       // @ts-ignore
       return getParameterBaseType(argument);
     } else if (identifier === 'StaticMember') {
       if (mode) mode.static = true;
+      let argument = typeReference.typeArguments![0];
+      // @ts-ignore
+      return getParameterBaseType(argument);
+    } else if (identifier === 'StaticMethod') {
+      if (mode) mode.staticMethod = true;
       let argument = typeReference.typeArguments![0];
       // @ts-ignore
       return getParameterBaseType(argument);
@@ -274,6 +304,9 @@ function walkProgram(blob: IDLBlob, statement: ts.Statement, definedPropertyColl
               let mode = new ParameterMode();
               f.returnType = getParameterType(m.type, unionTypeCollector, mode);
               f.returnTypeMode = mode;
+              if (f.returnTypeMode.staticMethod) {
+                obj.staticMethods.push(f);
+              }
             }
             break;
           }

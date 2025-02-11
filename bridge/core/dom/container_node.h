@@ -11,6 +11,7 @@
 #include "bindings/qjs/heap_vector.h"
 #include "core/html/collection_type.h"
 #include "node.h"
+#include "plugin_api/container_node.h"
 
 namespace webf {
 
@@ -41,6 +42,8 @@ class ContainerNode : public Node {
   Node* RemoveChild(Node* child, ExceptionState&);
   Node* AppendChild(Node* new_child, ExceptionState&);
   Node* AppendChild(Node* new_child);
+  void WillRemoveChildren();
+  void WillRemoveChild(Node& child);
   bool EnsurePreInsertionValidity(const Node& new_child,
                                   const Node* next,
                                   const Node* old_child,
@@ -149,6 +152,7 @@ class ContainerNode : public Node {
   Collection* EnsureCachedCollection(CollectionType);
 
   void Trace(GCVisitor* visitor) const override;
+  const ContainerNodePublicMethods* containerNodePublicMethods();
 
  protected:
   ContainerNode(TreeScope* tree_scope, ConstructionType = kCreateContainer);

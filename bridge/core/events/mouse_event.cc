@@ -43,8 +43,8 @@ MouseEvent::MouseEvent(ExecutingContext* context,
 MouseEvent::MouseEvent(ExecutingContext* context, const AtomicString& type, NativeMouseEvent* native_mouse_event)
     : UIEvent(context, type, &native_mouse_event->native_event),
       //    alt_key_(native_mouse_event->altKey),
-      //    button_(native_mouse_event->button),
-      //    buttons_(native_mouse_event->buttons),
+      button_(native_mouse_event->button),
+      //      buttons_(native_mouse_event->buttons),
       client_x_(native_mouse_event->clientX),
       client_y_(native_mouse_event->clientY),
       //    ctrl_key_(native_mouse_event->ctrlKey),
@@ -123,6 +123,11 @@ EventTarget* MouseEvent::relatedTarget() const {
 
 bool MouseEvent::IsMouseEvent() const {
   return true;
+}
+
+const MouseEventPublicMethods* MouseEvent::mouseEventPublicMethods() {
+  static MouseEventPublicMethods mouse_event_public_methods;
+  return &mouse_event_public_methods;
 }
 
 void MouseEvent::Trace(GCVisitor* visitor) const {

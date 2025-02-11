@@ -5,7 +5,6 @@
 import 'dart:collection';
 
 import 'package:flutter/rendering.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 import 'package:webf/dom.dart' as dom;
 import 'package:webf/webf.dart';
@@ -23,7 +22,7 @@ class WebFHTMLElementStatefulWidget extends StatefulWidget {
   }
 }
 
-class HTMLElementState extends State<WebFHTMLElementStatefulWidget> {
+class HTMLElementState extends State<WebFHTMLElementStatefulWidget> with AutomaticKeepAliveClientMixin {
   final Set<Widget> customElementWidgets = HashSet();
   final dom.Element _webFElement;
 
@@ -33,14 +32,16 @@ class HTMLElementState extends State<WebFHTMLElementStatefulWidget> {
   dom.Node get webFElement => _webFElement;
 
   void addWidgetChild(Widget widget) {
-    SchedulerBinding.instance.addPostFrameCallback((_) {
+    scheduleDelayForFrameCallback();
+    Future.microtask(() {
       setState(() {
         customElementWidgets.add(widget);
       });
     });
   }
   void removeWidgetChild(Widget widget) {
-    SchedulerBinding.instance.addPostFrameCallback((_) {
+    scheduleDelayForFrameCallback();
+    Future.microtask(() {
       if (_disposed) return;
       setState(() {
         customElementWidgets.remove(widget);
@@ -63,8 +64,12 @@ class HTMLElementState extends State<WebFHTMLElementStatefulWidget> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     return WebFHTMLElementToWidgetAdaptor(_webFElement, children: customElementWidgets.toList(), key: ObjectKey(_webFElement.hashCode),);
   }
+
+  @override
+  bool get wantKeepAlive => true;
 }
 
 class WebFHTMLElementToWidgetAdaptor extends MultiChildRenderObjectWidget {
@@ -77,6 +82,9 @@ class WebFHTMLElementToWidgetAdaptor extends MultiChildRenderObjectWidget {
 
   @override
   WebFHTMLElementToFlutterElementAdaptor createElement() {
+    if (enableWebFProfileTracking) {
+      WebFProfiler.instance.startTrackUICommand();
+    }
     WebFHTMLElementToFlutterElementAdaptor element = WebFHTMLElementToFlutterElementAdaptor(this);
     // If a WebF element was already connected to a flutter element, should unmount the previous linked renderObjectt
     if (_webFElement.flutterWidgetElement != null && _webFElement.flutterWidgetElement != element) {
@@ -84,6 +92,11 @@ class WebFHTMLElementToWidgetAdaptor extends MultiChildRenderObjectWidget {
     }
 
     _webFElement.flutterWidgetElement = element;
+
+    if (enableWebFProfileTracking) {
+      WebFProfiler.instance.finishTrackUICommand();
+    }
+
     return element;
   }
 

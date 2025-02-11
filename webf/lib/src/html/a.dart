@@ -13,14 +13,22 @@ class HTMLAnchorElement extends Element {
     addEventListener(EVENT_CLICK, _handleClick);
   }
 
-  void _handleClick(Event event) {
+  Future<void> _handleClick(Event event) async {
+    if (event.defaultPrevented) return;
     String? href = attributes['href'];
     if (href != null && href.isNotEmpty) {
       String baseUrl = ownerDocument.controller.url;
       Uri baseUri = Uri.parse(baseUrl);
       Uri resolvedUri = ownerDocument.controller.uriParser!.resolve(baseUri, Uri.parse(href));
-      ownerDocument.controller.view
-          .handleNavigationAction(baseUrl, resolvedUri.toString(), _getNavigationType(resolvedUri.scheme));
+
+      if (href.trim().startsWith('#')) {
+        HistoryModule historyModule = ownerDocument.controller.module.moduleManager.getModule('History')!;
+        historyModule.pushState(null, url: href);
+        await ownerView.window.dispatchEvent(HashChangeEvent(newUrl: resolvedUri.toString(), oldUrl: baseUrl));
+      } else {
+        await ownerDocument.controller.view
+            .handleNavigationAction(baseUrl, resolvedUri.toString(), _getNavigationType(resolvedUri.scheme));
+      }
     }
   }
 
