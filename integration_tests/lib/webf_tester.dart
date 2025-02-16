@@ -12,11 +12,13 @@ import 'main.dart';
 
 class WebFTester extends StatefulWidget {
   final String preCode;
+  final int mockServerPort;
   final void Function()? onWillFinish;
 
   const WebFTester({
     Key? key,
     required this.preCode,
+    required this.mockServerPort,
     this.onWillFinish,
   }) : super(key: key);
 
@@ -33,12 +35,16 @@ class _WebFTesterState extends State<WebFTester> {
 
   _WebFTesterState() {
     javaScriptChannel.onMethodCall = (String method, dynamic arguments) async {
-      switch(method) {
+      switch (method) {
         case 'helloInt64':
           return Future.value(1111111111111111);
         case 'resizeViewport':
-          double newWidth = arguments[0] == -1 ? 360 : double.tryParse(arguments[0].toString())!;
-          double newHeight = arguments[1] == -1 ? 640 : double.tryParse(arguments[1].toString())!;
+          double newWidth = arguments[0] == -1
+              ? 360
+              : double.tryParse(arguments[0].toString())!;
+          double newHeight = arguments[1] == -1
+              ? 640
+              : double.tryParse(arguments[1].toString())!;
           if (newWidth != width || newHeight != height) {
             setState(() {
               width = newWidth;
@@ -47,7 +53,8 @@ class _WebFTesterState extends State<WebFTester> {
           }
           return Future.value(null);
         default:
-          dynamic returnedValue = await javaScriptChannel.invokeMethod(method, arguments);
+          dynamic returnedValue =
+              await javaScriptChannel.invokeMethod(method, arguments);
           return 'method: $method, return_type: ${returnedValue.runtimeType.toString()}, return_value: ${returnedValue.toString()}';
       }
     };
@@ -58,10 +65,12 @@ class _WebFTesterState extends State<WebFTester> {
     return WebF(
       viewportWidth: width,
       viewportHeight: height,
-      bundle: WebFBundle.fromUrl('http://localhost:$MOCK_SERVER_PORT/public/core.build.js?search=1234#hash=hashValue'),
+      bundle: WebFBundle.fromUrl(
+          'http://localhost:${widget.mockServerPort}/public/core.build.js?search=1234#hash=hashValue'),
       disableViewportWidthAssertion: true,
       disableViewportHeightAssertion: true,
       javaScriptChannel: javaScriptChannel,
+      runningThread: FlutterUIThread(),
       onControllerCreated: onControllerCreated,
       onLoad: onLoad,
       gestureListener: GestureListener(
@@ -77,11 +86,10 @@ class _WebFTesterState extends State<WebFTester> {
 
   onControllerCreated(WebFController controller) async {
     this.controller = controller;
-    int contextId = controller.view.contextId;
+    double contextId = controller.view.contextId;
     testContext = initTestFramework(contextId);
     registerDartTestMethodsToCpp(contextId);
-    addJSErrorListener(contextId, print);
-    controller.view.evaluateJavaScripts(widget.preCode);
+    await controller.view.evaluateJavaScripts(widget.preCode);
   }
 
   onLoad(WebFController controller) async {
@@ -91,19 +99,24 @@ class _WebFTesterState extends State<WebFTester> {
       mems.add([x += 1, ProcessInfo.currentRss / 1024 ~/ 1024]);
     });
 
-    // Preload load test cases
-    String result = await executeTest(testContext!, controller.view.contextId);
-    // Manual dispose context for memory leak check.
-    controller.dispose();
+    try {
+      // Preload load test cases
+      String result =
+          await executeTest(testContext!, controller.view.contextId);
+      // Manual dispose context for memory leak check.
+      await controller.dispose();
 
-    // Check running memorys
-    // Temporary disabled due to exist memory leaks
-    // if (isMemLeaks(mems)) {
-    //   print('Memory leaks found. ${mems.map((e) => e[1]).toList()}');
-    //   exit(1);
-    // }
-    widget.onWillFinish?.call();
+      // Check running memorys
+      // Temporary disabled due to exist memory leaks
+      // if (isMemLeaks(mems)) {
+      //   print('Memory leaks found. ${mems.map((e) => e[1]).toList()}');
+      //   exit(1);
+      // }
+      widget.onWillFinish?.call();
 
-    exit(result == 'failed' ? 1 : 0);
+      exit(result == 'failed' ? 1 : 0);
+    } catch (e) {
+      print(e);
+    }
   }
 }

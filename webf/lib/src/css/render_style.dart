@@ -9,6 +9,7 @@ import 'dart:ui';
 import 'package:flutter/rendering.dart';
 import 'package:webf/css.dart';
 import 'package:webf/dom.dart';
+import 'package:webf/foundation.dart';
 import 'package:webf/rendering.dart';
 import 'package:webf/src/css/css_animation.dart';
 
@@ -210,6 +211,7 @@ abstract class RenderStyle {
   void addFontRelativeProperty(String propertyName);
   void addRootFontRelativeProperty(String propertyName);
   void addColorRelativeProperty(String propertyName);
+  void addViewportSizeRelativeProperty();
   double getWidthByAspectRatio();
   double getHeightByAspectRatio();
 
@@ -217,7 +219,7 @@ abstract class RenderStyle {
   // for class that extends [AbstractRenderStyle].
   RenderBoxModel? get renderBoxModel => target.renderBoxModel;
 
-  Size get viewportSize => target.ownerDocument.viewport!.viewportSize;
+  Size get viewportSize => target.ownerDocument.viewport?.viewportSize ?? Size.zero;
   FlutterView get currentFlutterView => target.ownerDocument.controller.ownerFlutterView;
 
   double get rootFontSize => target.ownerDocument.documentElement!.renderStyle.fontSize.computedValue;
@@ -444,8 +446,399 @@ class CSSRenderStyle extends RenderStyle
     }
   }
 
+  setProperty(String name, value) {
+    // Memorize the variable value to renderStyle object.
+    if (CSSVariable.isVariable(name)) {
+      setCSSVariable(name, value.toString());
+      return;
+    }
+
+    // Get the computed value of CSS variable.
+    if (value is CSSVariable) {
+      value = value.computedValue(name);
+    }
+
+    if (value is CSSCalcValue) {
+      if (name == BACKGROUND_POSITION_X || name == BACKGROUND_POSITION_Y) {
+        value = CSSBackgroundPosition(calcValue: value);
+      } else {
+        value = value.computedValue(name);
+        if (value != null) {
+          value = CSSLengthValue(value, CSSLengthType.PX);
+        }
+      }
+    }
+
+    switch (name) {
+      case DISPLAY:
+        display = value;
+        break;
+      case Z_INDEX:
+        zIndex = value;
+        break;
+      case OVERFLOW_X:
+        overflowX = value;
+        break;
+      case OVERFLOW_Y:
+        overflowY = value;
+        break;
+      case OPACITY:
+        opacity = value;
+        break;
+      case VISIBILITY:
+        visibility = value;
+        break;
+      case CONTENT_VISIBILITY:
+        contentVisibility = value;
+        break;
+      case POSITION:
+        position = value;
+        break;
+      case TOP:
+        top = value;
+        break;
+      case LEFT:
+        left = value;
+        break;
+      case BOTTOM:
+        bottom = value;
+        break;
+      case RIGHT:
+        right = value;
+        break;
+      // Size
+      case WIDTH:
+        width = value;
+        break;
+      case MIN_WIDTH:
+        minWidth = value;
+        break;
+      case MAX_WIDTH:
+        maxWidth = value;
+        break;
+      case HEIGHT:
+        height = value;
+        break;
+      case MIN_HEIGHT:
+        minHeight = value;
+        break;
+      case MAX_HEIGHT:
+        maxHeight = value;
+        break;
+      // Flex
+      case FLEX_DIRECTION:
+        flexDirection = value;
+        break;
+      case FLEX_WRAP:
+        flexWrap = value;
+        break;
+      case ALIGN_CONTENT:
+        alignContent = value;
+        break;
+      case ALIGN_ITEMS:
+        alignItems = value;
+        break;
+      case JUSTIFY_CONTENT:
+        justifyContent = value;
+        break;
+      case ALIGN_SELF:
+        alignSelf = value;
+        break;
+      case FLEX_GROW:
+        flexGrow = value;
+        break;
+      case FLEX_SHRINK:
+        flexShrink = value;
+        break;
+      case FLEX_BASIS:
+        flexBasis = value;
+        break;
+      // Background
+      case BACKGROUND_COLOR:
+        backgroundColor = value;
+        break;
+      case BACKGROUND_ATTACHMENT:
+        backgroundAttachment = value;
+        break;
+      case BACKGROUND_IMAGE:
+        backgroundImage = value;
+        break;
+      case BACKGROUND_REPEAT:
+        backgroundRepeat = value;
+        break;
+      case BACKGROUND_POSITION_X:
+        backgroundPositionX = value;
+        break;
+      case BACKGROUND_POSITION_Y:
+        backgroundPositionY = value;
+        break;
+      case BACKGROUND_SIZE:
+        backgroundSize = value;
+        break;
+      case BACKGROUND_CLIP:
+        backgroundClip = value;
+        break;
+      case BACKGROUND_ORIGIN:
+        backgroundOrigin = value;
+        break;
+      // Padding
+      case PADDING_TOP:
+        paddingTop = value;
+        break;
+      case PADDING_RIGHT:
+        paddingRight = value;
+        break;
+      case PADDING_BOTTOM:
+        paddingBottom = value;
+        break;
+      case PADDING_LEFT:
+        paddingLeft = value;
+        break;
+      // Border
+      case BORDER_LEFT_WIDTH:
+        borderLeftWidth = value;
+        break;
+      case BORDER_TOP_WIDTH:
+        borderTopWidth = value;
+        break;
+      case BORDER_RIGHT_WIDTH:
+        borderRightWidth = value;
+        break;
+      case BORDER_BOTTOM_WIDTH:
+        borderBottomWidth = value;
+        break;
+      case BORDER_LEFT_STYLE:
+        borderLeftStyle = value;
+        break;
+      case BORDER_TOP_STYLE:
+        borderTopStyle = value;
+        break;
+      case BORDER_RIGHT_STYLE:
+        borderRightStyle = value;
+        break;
+      case BORDER_BOTTOM_STYLE:
+        borderBottomStyle = value;
+        break;
+      case BORDER_LEFT_COLOR:
+        borderLeftColor = value;
+        break;
+      case BORDER_TOP_COLOR:
+        borderTopColor = value;
+        break;
+      case BORDER_RIGHT_COLOR:
+        borderRightColor = value;
+        break;
+      case BORDER_BOTTOM_COLOR:
+        borderBottomColor = value;
+        break;
+      case BOX_SHADOW:
+        boxShadow = value;
+        break;
+      case BORDER_TOP_LEFT_RADIUS:
+        borderTopLeftRadius = value;
+        break;
+      case BORDER_TOP_RIGHT_RADIUS:
+        borderTopRightRadius = value;
+        break;
+      case BORDER_BOTTOM_LEFT_RADIUS:
+        borderBottomLeftRadius = value;
+        break;
+      case BORDER_BOTTOM_RIGHT_RADIUS:
+        borderBottomRightRadius = value;
+        break;
+      // Margin
+      case MARGIN_LEFT:
+        marginLeft = value;
+        break;
+      case MARGIN_TOP:
+        marginTop = value;
+        break;
+      case MARGIN_RIGHT:
+        marginRight = value;
+        break;
+      case MARGIN_BOTTOM:
+        marginBottom = value;
+        break;
+      // Text
+      case COLOR:
+        color = value;
+        break;
+      case TEXT_DECORATION_LINE:
+        textDecorationLine = value;
+        break;
+      case TEXT_DECORATION_STYLE:
+        textDecorationStyle = value;
+        break;
+      case TEXT_DECORATION_COLOR:
+        textDecorationColor = value;
+        break;
+      case FONT_WEIGHT:
+        fontWeight = value;
+        break;
+      case FONT_STYLE:
+        fontStyle = value;
+        break;
+      case FONT_FAMILY:
+        fontFamily = value;
+        break;
+      case FONT_SIZE:
+        fontSize = value;
+        break;
+      case LINE_HEIGHT:
+        lineHeight = value;
+        break;
+      case LETTER_SPACING:
+        letterSpacing = value;
+        break;
+      case WORD_SPACING:
+        wordSpacing = value;
+        break;
+      case TEXT_SHADOW:
+        textShadow = value;
+        break;
+      case WHITE_SPACE:
+        whiteSpace = value;
+        break;
+      case TEXT_OVERFLOW:
+        textOverflow = value;
+        break;
+      case LINE_CLAMP:
+        lineClamp = value;
+        break;
+      case VERTICAL_ALIGN:
+        verticalAlign = value;
+        break;
+      case TEXT_ALIGN:
+        textAlign = value;
+        break;
+      // Transform
+      case TRANSFORM:
+        transform = value;
+        break;
+      case TRANSFORM_ORIGIN:
+        transformOrigin = value;
+        break;
+      // Transition
+      case TRANSITION_DELAY:
+        transitionDelay = value;
+        break;
+      case TRANSITION_DURATION:
+        transitionDuration = value;
+        break;
+      case TRANSITION_TIMING_FUNCTION:
+        transitionTimingFunction = value;
+        break;
+      case TRANSITION_PROPERTY:
+        transitionProperty = value;
+        break;
+      // Animation
+      case ANIMATION_DELAY:
+        animationDelay = value;
+        break;
+      case ANIMATION_NAME:
+        animationName = value;
+        break;
+      case ANIMATION_DIRECTION:
+        animationDirection = value;
+        break;
+      case ANIMATION_DURATION:
+        animationDuration = value;
+        break;
+      case ANIMATION_PLAY_STATE:
+        animationPlayState = value;
+        break;
+      case ANIMATION_FILL_MODE:
+        animationFillMode = value;
+        break;
+      case ANIMATION_ITERATION_COUNT:
+        animationIterationCount = value;
+        break;
+      case ANIMATION_TIMING_FUNCTION:
+        animationTimingFunction = value;
+        break;
+      // Others
+      case OBJECT_FIT:
+        objectFit = value;
+        break;
+      case OBJECT_POSITION:
+        objectPosition = value;
+        break;
+      case FILTER:
+        filter = value;
+        break;
+      case SLIVER_DIRECTION:
+        sliverDirection = value;
+        break;
+      case CARETCOLOR:
+        caretColor = (value as CSSColor).value;
+        break;
+      case FILL:
+        fill = value;
+        break;
+      case STROKE:
+        stroke = value;
+        break;
+      case STROKE_WIDTH:
+        strokeWidth = value;
+        break;
+      case X:
+        x = value;
+        break;
+      case Y:
+        y = value;
+        break;
+      case RX:
+        rx = value;
+        break;
+      case RY:
+        ry = value;
+        break;
+      case CX:
+        cx = value;
+        break;
+      case CY:
+        cy = value;
+        break;
+      case R:
+        r = value;
+        break;
+      case X1:
+        x1 = value;
+        break;
+      case X2:
+        x2 = value;
+        break;
+      case Y1:
+        y1 = value;
+        break;
+      case Y2:
+        y2 = value;
+        break;
+      case D:
+        d = value;
+        break;
+      case FILL_RULE:
+        fillRule = value;
+        break;
+      case STROKE_LINECAP:
+        strokeLinecap = value;
+        break;
+      case STROKE_LINEJOIN:
+        strokeLinejoin = value;
+        break;
+    }
+  }
+
   @override
   dynamic resolveValue(String propertyName, String propertyValue, { String? baseHref }) {
+    bool uiCommandTracked = false;
+    if (enableWebFProfileTracking) {
+      if (!WebFProfiler.instance.currentPipeline.containsActiveUICommand()) {
+        WebFProfiler.instance.startTrackUICommand();
+        uiCommandTracked = true;
+      }
+      WebFProfiler.instance.startTrackUICommandStep('$this.renderStyle.resolveValue');
+    }
     RenderStyle renderStyle = this;
 
     if (propertyValue == INITIAL) {
@@ -455,6 +848,12 @@ class CSSRenderStyle extends RenderStyle
     // Process CSSVariable.
     dynamic value = CSSVariable.tryParse(renderStyle, propertyValue);
     if (value != null) {
+      if (enableWebFProfileTracking) {
+        WebFProfiler.instance.finishTrackUICommandStep();
+        if (uiCommandTracked) {
+          WebFProfiler.instance.finishTrackUICommand();
+        }
+      }
       return value;
     }
 
@@ -722,6 +1121,13 @@ class CSSRenderStyle extends RenderStyle
         break;
     }
 
+    if (enableWebFProfileTracking) {
+      WebFProfiler.instance.finishTrackUICommandStep();
+      if (uiCommandTracked) {
+        WebFProfiler.instance.finishTrackUICommand();
+      }
+    }
+
     // --x: foo;
     // Directly passing the value, not to resolve now.
     if (CSSVariable.isVariable(propertyName)) {
@@ -967,9 +1373,16 @@ class CSSRenderStyle extends RenderStyle
   // Max width to constrain its children, used in deciding the line wrapping timing of layout.
   @override
   double get contentMaxConstraintsWidth {
+    if (enableWebFProfileTracking) {
+      WebFProfiler.instance.startTrackLayoutStep('RenderStyle.contentMaxConstraintsWidth');
+    }
+
     // If renderBoxModel definite content constraints, use it as max constrains width of content.
     BoxConstraints? contentConstraints = renderBoxModel!.contentConstraints;
     if (contentConstraints != null && contentConstraints.maxWidth != double.infinity) {
+      if (enableWebFProfileTracking) {
+        WebFProfiler.instance.finishTrackLayoutStep();
+      }
       return contentConstraints.maxWidth;
     }
 
@@ -994,6 +1407,10 @@ class CSSRenderStyle extends RenderStyle
       //   </div>
       // </div>
       contentMaxConstraintsWidth = math.max(0, contentMaxConstraintsWidth);
+    }
+
+    if (enableWebFProfileTracking) {
+      WebFProfiler.instance.finishTrackLayoutStep();
     }
 
     return contentMaxConstraintsWidth;
@@ -1210,6 +1627,7 @@ class CSSRenderStyle extends RenderStyle
   void detach() {
     // Clear reference to it's parent.
     parent = null;
+    backgroundImage = null;
   }
 
   // Find ancestor render style with display of not inline.
@@ -1240,7 +1658,8 @@ class CSSRenderStyle extends RenderStyle
         bool isGrandParentFlex = grandParentRenderStyle.display == CSSDisplay.flex ||
             grandParentRenderStyle.display == CSSDisplay.inlineFlex;
         bool isHorizontalDirection = CSSFlex.isHorizontalFlexDirection(grandParentRenderStyle.flexDirection);
-        if (isGrandParentFlex && isHorizontalDirection && parentRenderStyle.flexShrink == 0) {
+        if (isGrandParentFlex && isHorizontalDirection && parentRenderStyle.flexShrink == 0 &&
+            parentRenderStyle.contentBoxLogicalWidth == null && parentRenderStyle.maxWidth.value == null) {
           return null;
         }
       }

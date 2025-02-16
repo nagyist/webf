@@ -9,6 +9,7 @@
 #include "bindings/qjs/wrapper_type_info.h"
 #include "core/css/computed_css_style_declaration.h"
 #include "core/dom/events/event_target.h"
+#include "plugin_api/window.h"
 #include "qjs_scroll_to_options.h"
 #include "screen.h"
 
@@ -56,9 +57,11 @@ class Window : public EventTargetWithInlineData {
   double requestAnimationFrame(const std::shared_ptr<QJSFunction>& callback, ExceptionState& exceptionState);
   void cancelAnimationFrame(double request_id, ExceptionState& exception_state);
 
+  void OnLoadEventFired();
   bool IsWindowOrWorkerGlobalScope() const override;
 
   void Trace(GCVisitor* visitor) const override;
+  const WindowPublicMethods* windowPublicMethods();
 
   // Override default ToQuickJS() to return Global object when access `window` property.
   JSValue ToQuickJS() const override;

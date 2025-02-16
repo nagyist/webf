@@ -41,13 +41,11 @@ class RenderReplaced extends RenderBoxModel with RenderObjectWithChildMixin<Rend
 
   @override
   void setupParentData(RenderBox child) {
-    if (child.parentData is! RenderLayoutParentData) {
-      if (child is RenderBoxModel) {
-        RenderLayoutParentData parentData = RenderLayoutParentData();
-        child.parentData = CSSPositionedLayout.getPositionParentData(child, parentData);
-      } else {
-        child.parentData = RenderLayoutParentData();
-      }
+    if (child is RenderBoxModel) {
+      RenderLayoutParentData parentData = RenderLayoutParentData();
+      child.parentData = CSSPositionedLayout.getPositionParentData(child, parentData);
+    } else {
+      child.parentData = RenderLayoutParentData();
     }
   }
 
@@ -160,6 +158,13 @@ class RenderReplaced extends RenderBoxModel with RenderObjectWithChildMixin<Rend
       return hitTestIntrinsicChild(result, child, position!);
     }
     return super.hitTestChildren(result, position: position!);
+  }
+
+  @override
+  T copyWith<T extends RenderBoxModel>(T copiedRenderBoxModel) {
+    final renderObject = super.copyWith(copiedRenderBoxModel) as RenderReplaced;
+    renderObject._isInLazyRendering = _isInLazyRendering;
+    return renderObject as T;
   }
 }
 

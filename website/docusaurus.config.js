@@ -37,7 +37,7 @@ const config = {
           // Please change this to your repo.
           // Remove this to remove the "edit this page" links.
           editUrl:
-            'https://github.com/facebook/docusaurus/tree/main/packages/create-docusaurus/templates/shared/',
+            'https://github.com/openwebf/webf/blob/main/website/',
         },
         // blog: {
         //   showReadingTime: true,
@@ -69,13 +69,19 @@ const config = {
             position: 'left',
             label: 'Docs',
           },
+          {
+            type: 'doc',
+            docId: 'enterprise/flutter_widget_element',
+            position: 'left',
+            label: 'Enterprise'
+          },
           // {
           //   type: 'doc',
           //   docId: 'api/intro',
           //   position: 'left',
           //   label: 'API'
           // },
-          // {to: '/blog', label: 'Blog', position: 'left'},
+          {to: '/blog', label: 'Blog', position: 'left', docId: 'blog'},
           {
             href: 'https://github.com/openwebf/webf',
             label: 'GitHub',
@@ -123,10 +129,10 @@ const config = {
           {
             title: 'More',
             items: [
-              // {
-              //   label: 'Blog',
-              //   to: '/blog',
-              // },
+              {
+                label: 'Blog',
+                to: '/blog',
+              },
               {
                 label: 'GitHub',
                 href: 'https://github.com/openwebf/webf',

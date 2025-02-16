@@ -4,6 +4,7 @@
  */
 #include "custom_event.h"
 #include "bindings/qjs/cppgc/gc_visitor.h"
+#include "core/native/script_value_ref.h"
 #include "native_value_converter.h"
 
 namespace webf {
@@ -67,6 +68,11 @@ void CustomEvent::initCustomEvent(const AtomicString& type,
 
 bool CustomEvent::IsCustomEvent() const {
   return true;
+}
+
+const CustomEventPublicMethods* CustomEvent::customEventPublicMethods() {
+  static CustomEventPublicMethods custom_event_public_methods;
+  return &custom_event_public_methods;
 }
 
 void CustomEvent::Trace(GCVisitor* visitor) const {

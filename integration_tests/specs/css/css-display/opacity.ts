@@ -1,5 +1,5 @@
 describe('Opacity', () => {
-  
+
   it('opacity', done => {
     const container1 = document.createElement('div');
     document.body.appendChild(container1);
@@ -20,20 +20,15 @@ describe('Opacity', () => {
 
     container1.appendChild(container2);
 
-    container1.addEventListener('click', () => {
-      console.log('container clicked');
-    });
-    container2.addEventListener('click', () => {
-      console.log('inner clicked');
-    });
-
     requestAnimationFrame(async () => {
       setElementStyle(container2, {
         opacity: 0.5,
       });
 
-      await snapshot();
-      done();
+      requestAnimationFrame(async () => {
+        await snapshot();
+        done();
+      });
     });
   });
 

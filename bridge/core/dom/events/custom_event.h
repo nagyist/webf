@@ -6,6 +6,7 @@
 #define BRIDGE_CUSTOM_EVENT_H
 
 #include "event.h"
+#include "plugin_api/custom_event.h"
 #include "qjs_custom_event_init.h"
 
 namespace webf {
@@ -48,6 +49,8 @@ class CustomEvent final : public Event {
                        bool cancelable,
                        const ScriptValue& detail,
                        ExceptionState& exception_state);
+
+  const CustomEventPublicMethods* customEventPublicMethods();
 
   bool IsCustomEvent() const override;
 

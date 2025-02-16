@@ -14,10 +14,19 @@ class WebFHTMLElement extends MultiChildRenderObjectWidget {
 
   @override
   RenderObject createRenderObject(BuildContext context) {
+    if (enableWebFProfileTracking) {
+      WebFProfiler.instance.startTrackUICommand();
+    }
     _WebFElement webfElement = context as _WebFElement;
     WebFContextInheritElement? webfContext = context.getElementForInheritedWidgetOfExactType<WebFContext>() as WebFContextInheritElement;
     context.htmlElement = dom.createElement(tagName, BindingContext(webfContext.controller!.view, webfContext.controller!.view.contextId, allocateNewBindingObject()));
-    return webfElement.htmlElement!.createRenderer();
+    RenderObject renderObject = webfElement.htmlElement!.createRenderer();
+
+    if (enableWebFProfileTracking) {
+      WebFProfiler.instance.finishTrackUICommand();
+    }
+
+    return renderObject;
   }
 
   @override
@@ -38,17 +47,29 @@ class _WebFElement extends MultiChildRenderObjectElement {
     inlineStyle.forEach((key, value) {
       htmlElement!.setInlineStyle(key, value);
     });
+    htmlElement!.recalculateStyle();
   }
 
   @override
   void mount(Element? parent, Object? newSlot) {
+    if (enableWebFProfileTracking) {
+      WebFProfiler.instance.startTrackUICommand();
+    }
     super.mount(parent, newSlot);
     htmlElement!.managedByFlutterWidget = true;
     htmlElement!.createdByFlutterWidget = true;
 
     dom.Element? parentElement = findClosestAncestorHTMLElement(this);
+
     if (parentElement != null) {
       parentElement.appendChild(htmlElement!);
+
+      if (parentElement is RouterLinkElement) {
+        // Migrate previous childNodes into RouterLinkElement.
+        parentElement.cachedChildNodes.forEach((node) {
+          htmlElement!.appendChild(node);
+        });
+      }
 
       if (widget.inlineStyle != null) {
         fullFillInlineStyle(widget.inlineStyle!);
@@ -56,8 +77,15 @@ class _WebFElement extends MultiChildRenderObjectElement {
 
       htmlElement!.ensureChildAttached();
       htmlElement!.applyStyle(htmlElement!.style);
-      // Flush pending style before child attached.
-      htmlElement!.style.flushPendingProperties();
+
+      if (htmlElement!.ownerDocument.controller.mode != WebFLoadingMode.preRendering) {
+        // Flush pending style before child attached.
+        htmlElement!.style.flushPendingProperties();
+      }
+    }
+
+    if (enableWebFProfileTracking) {
+      WebFProfiler.instance.finishTrackUICommand();
     }
   }
 
