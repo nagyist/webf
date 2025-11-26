@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2024-present The OpenWebF Company. All rights reserved.
- * Licensed under GNU AGPL with Enterprise exception.
+ * Licensed under the Apache License, Version 2.0.
  */
 
 /**
@@ -54,4 +54,3 @@ interface FlutterCupertinoSliderEvents {
   /** Fired when the user stops interacting with the slider. */
   changeend: CustomEvent<double>;
 }
-

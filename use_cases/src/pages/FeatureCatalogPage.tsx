@@ -91,29 +91,41 @@ const sections: Section[] = [
   {
     title: 'Cupertino UI',
     items: [
-      { label: 'Cupertino Buttons', path: '/cupertino/buttons' },
-      { label: 'Cupertino Action Sheet', path: '/cupertino/actionsheet' },
-      { label: 'Cupertino Alert Dialog', path: '/cupertino/alert' },
-      { label: 'Cupertino Switches & Sliders', path: '/cupertino/controls' },
+      { label: 'Cupertino Showcase', path: '/cupertino-showcase', desc: 'iOS-style components and interactions' },
+    ],
+  },
+  {
+    title: 'Gestures',
+    items: [
+      { label: 'FlutterGestureDetector', path: '/gesture', desc: 'Native gesture detection with tap, pan, pinch, and rotate' },
+    ],
+  },
+  // {
+  //   title: 'Accessibility',
+  //   items: [
+  //     {
+  //       label: 'Accessibility Use Cases',
+  //       path: '/accessibility',
+  //       desc: 'Landmarks, keyboard navigation, and accessible forms',
+  //     },
+  //   ],
+  // },
+  {
+    title: 'Forms & Input',
+    items: [
+      { label: 'Form (Basic)', path: '/form' },
+      { label: 'Basic Form Elements', path: '/basic-form-elements' },
+      { label: 'Input Sizing', path: '/input-sizing' },
+      { label: 'Form (Advanced)', path: '/advanced-form' },
     ],
   },
   {
     title: 'Others',
     items: [
       { label: 'Listview', path: '/listview' },
-      { label: 'Form (Basic)', path: '/form' },
-      { label: 'Basic Form Elements', path: '/basic-form-elements' },
-      { label: 'Input Sizing', path: '/input-sizing' },
-      { label: 'Form (Advanced)', path: '/advanced-form' },
       { label: 'Tables', path: '/table' },
       { label: 'QR Code Generator', path: '/qrcode' },
       { label: 'Video Player', path: '/video' },
-      { label: 'Action Sheets', path: '/actionsheet' },
-      { label: 'Context Menu', path: '/contextmenu' },
-      { label: 'Modal Popup', path: '/modalpopup' },
-      { label: 'Loading', path: '/loading' },
-      { label: 'Alert', path: '/alert' },
-      { label: 'Gestures', path: '/gesture' },
     ],
   },
 ];
